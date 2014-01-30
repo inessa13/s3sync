@@ -1,0 +1,7 @@
+key_pat: '{name} {storage} {size} {modified} {owner} {md5}'
+key_pat_name_len: 60
+access_key: ""
+secret_key: ""
+local_root: d:\doc\photo
+bucket: davo-photo
+modes: "<>+-r"
