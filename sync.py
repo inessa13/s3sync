@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import boto
 from time import time, sleep
 from threading import Thread
 from commandtool import CommandTool
@@ -99,7 +100,7 @@ class S3SyncTool(CommandTool):
             key_pat=u"{name} {storage} {size} {modified} {owner} {md5}",
             key_pat_name_len=60,
             list_limit=20,
-            config_file=__file__.split('.')[0] + '.yaml',
+            #config_file=__file__.split('.')[0] + '.yaml',
             modes='-=<>+',
             confirm_permanent=dict(),
             compare_hash=True,
@@ -117,9 +118,27 @@ class S3SyncTool(CommandTool):
             return self.error('missing access or secret key')
 
         self.info('connecting s3...')
+        # os.environ['S3_USE_SIGV4'] = 'True' 
         self.conn = S3Connection(self.conf.get('access_key'), self.conf.get('secret_key'))
 
         super(S3SyncTool, self).handler(cli)
+    
+    def bucket(self):
+        from boto.s3.connection import S3Connection
+
+        for region in boto.s3.regions():
+            if self.conf.get('allowed_regions') and region.name not in self.conf['allowed_regions']:
+                continue
+            conn = S3Connection(
+                self.conf.get('access_key'),
+                self.conf.get('secret_key'),
+                host=region.endpoint)
+            if not conn:
+                continue
+            bucket = conn.lookup(self.conf['bucket'], validate=True)
+            if bucket is not None:
+                return bucket
+        return None
 
     def on_list_buckets(self):
         self.info('listing buckets:')
@@ -128,9 +147,16 @@ class S3SyncTool(CommandTool):
 
     def on_list(self):
         from utils import list_remote_dir
-        b = list_remote_dir(self.conn, **self.conf)
-        if not b:
+        
+        if len(self.args) < 2:
+            self.conf['compare_path'] = ''
+        else:
+            self.conf['compare_path'] = self.args[1]
+
+        b = list_remote_dir(self.bucket(), self.conf)
+        if b is False:
             return self.error('missing bucket')
+
         for i, k in b:
             if i >= self.conf['list_limit']:
                 self.info("list limit reached!")
@@ -179,25 +205,25 @@ class S3SyncTool(CommandTool):
         self.info(u"{0} local objects", len(src_files))
 
         remote_files = dict()
-        ls = list_remote_dir(self.conn, **self.conf)
-        if ls:
-            for i, f in ls:
-                if not isinstance(f, Key) or f.name[-1] == '/':
-                    continue
-                if not self._check_file_type(f.name):
-                    continue
-                remote_files[f.name.lower()] = dict(
-                    key=f,
-                    name=f.name,
-                    size=f.size,
-                    modified=f.last_modified,
-                    md5=f.etag[1:-1],
-                    state=u'-',
-                    comment=[],
-                )
-            self.info(u"{0} remote objects", len(remote_files.keys()))
-        else:
+        ls = list_remote_dir(self.bucket(), self.conf)
+        if ls is False:
             return self.error('missing bucket')
+
+        for i, f in ls:
+            if not isinstance(f, Key) or f.name[-1] == '/':
+                continue
+            if not self._check_file_type(f.name):
+                continue
+            remote_files[f.name.lower()] = dict(
+                key=f,
+                name=f.name,
+                size=f.size,
+                modified=f.last_modified,
+                md5=f.etag[1:-1],
+                state=u'-',
+                comment=[],
+            )
+        self.info(u"{0} remote objects", len(remote_files.keys()))
 
         if not len(src_files) and not len(remote_files.keys()):
             return
@@ -385,7 +411,7 @@ class S3SyncTool(CommandTool):
 
     def _update_upload(self, name, data):
         from boto.s3.key import Key
-        bucket = self.conn.lookup(self.conf['bucket'], validate=True)
+        bucket = self.bucket()
         key = Key(bucket=bucket, name=name)
         with open(os.path.join(self.conf['local_root'], name), 'rb') as f:
             _t = time()
@@ -502,7 +528,7 @@ class S3SyncTool(CommandTool):
                 md5=''
             )
 
-        self.log(self.conf['key_pat'].format(**params))
+        self.log(unicode(self.conf['key_pat']).format(**params))
 
     def _print_diff_line(self, name, data):
         self.info(u"{0} {1} {2}", data['state'], name, ', '.join(data.get('comment', [])))

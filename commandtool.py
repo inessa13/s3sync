@@ -178,6 +178,9 @@ class CommandTool(object):
             if v:
                 self.conf[k] = v
 
+        if self.conf.get('config_file'):
+            self._load_config_file(self.conf['config_file'])
+            
         self.handler(cli=True)
 
     def handler(self, cli=False):

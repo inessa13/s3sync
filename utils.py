@@ -11,10 +11,7 @@ def file_hash(f_path):
     return hash_.hexdigest()
 
 
-def list_remote_dir(conn, **opt):
-    if not opt.get('bucket'):
-        return False
-    bucket = conn.lookup(opt['bucket'], validate=True)
+def list_remote_dir(bucket, opt):
     if not bucket:
         return False
 
