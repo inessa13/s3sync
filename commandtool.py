@@ -137,7 +137,7 @@ class CommandTool(object):
     def _set_speed(self, t_before, size):
         from time import time
         _t = time() - t_before
-        _t = float(size) / _t
+        _t = (float(size) / _t) if _t else 0
         if not self.conf.get('speed'):
             self.conf['speed'] = []
         self.conf['speed'].append(_t)

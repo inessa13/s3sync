@@ -289,7 +289,7 @@ class S3SyncTool(CommandTool):
                     if data['md5'] != new_data['md5']:
                         continue
                     remote_files[name].update(state='r', local_name=key, local_size=new_data['local_size'])
-                    remote_files[name]['comment'].append('new: {0}'.format(key))
+                    remote_files[name]['comment'].append(u'new: {0}'.format(key))
                     to_del.append(key)
                     break
             for key in to_del:
