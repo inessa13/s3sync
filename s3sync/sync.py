@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import boto
-from time import time, sleep
+from time import time
 from threading import Thread
 from commandtool import CommandTool
 
@@ -534,8 +534,13 @@ class S3SyncTool(CommandTool):
         self.info(u"{0} {1} {2}", data['state'], name, ', '.join(data.get('comment', [])))
 
 
-tool = S3SyncTool()
-try:
-    tool.run_cli()
-except KeyboardInterrupt:
-    tool.log('interrupted')
+def main():
+    tool = S3SyncTool()
+    try:
+        tool.run_cli()
+    except KeyboardInterrupt:
+        tool.log('interrupted')
+
+
+if __name__ == '__main__':
+    main()
