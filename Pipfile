@@ -4,9 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [dev-packages]
+pylint = "*"
+"flake8" = "*"
 
 [packages]
 boto = "*"
+pyyaml = "*"
 
 [requires]
 python_version = "2.7"

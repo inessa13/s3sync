@@ -32,5 +32,5 @@ setup(
     include_package_data=False,
     zip_safe=False,
     # test_suite='tests',
-    python_requires='2.7',
+    python_requires='~=2.7',
 )

@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
-import os
 import logging
-from optparse import OptionParser
+import optparse
+import os
+import sys
+import time
+
+import yaml
+
+from . import utils
 
 
 class CommandTool(object):
@@ -19,6 +25,7 @@ class CommandTool(object):
 
     def __init__(self, **options):
         self.conf = self.default_config()
+        self.opt, self.args = None, None
         try:
             self._load_config_file(self.conf['config_file'])
 
@@ -30,8 +37,8 @@ class CommandTool(object):
             self._init_log()
             self._init_success = True
 
-        except self.InitError, e:
-            self.error(e.args[0])
+        except self.InitError as exc:
+            self.error(exc.args[0])
             self._init_success = False
 
     @staticmethod
@@ -56,26 +63,26 @@ class CommandTool(object):
             return
 
         try:
-            import yaml
-            with open(path, 'r') as f:
-                l = yaml.load(f)
-                if not l:
+            with open(path, 'r') as file_:
+                _loaded = yaml.load(file_)
+                if not _loaded:
                     raise self.InitError('Config file is empty')
-            self.conf.update(l)
+            self.conf.update(_loaded)
             self.conf['config_file'] = path
             self.log("load config file: '{config_file}'")
         except self.Error:
             raise
         except ImportError:
             raise self.InitError('Missing yaml module')
-        except Exception as e:
-            raise self.InitError('Error on config load', e)
+        except Exception as exc:
+            raise self.InitError('Error on config load', exc)
 
     def _init_log(self):
         self._logger = logging.getLogger(self.conf['log_name'])
         if not self._logger.handlers:
             if self.conf.get('log_file'):
-                log_handler = logging.FileHandler(self.conf['log_file'], 'a', 'utf-8')
+                log_handler = logging.FileHandler(
+                    self.conf['log_file'], 'a', 'utf-8')
                 log_handler.setFormatter(logging.Formatter(
                     fmt=self.conf['log_fmt'],
                     datefmt=self.conf['log_date_fmt']))
@@ -87,15 +94,13 @@ class CommandTool(object):
             self._logger.addHandler(log_handler)
 
     def log(self, message, level=logging.INFO, *args, **kwargs):
-        """"""
         kwargs.update(self.conf)
         message = message.format(*args, **kwargs)
         if not hasattr(self, '_logger'):
             print message
         else:
             if self.conf.get('to_clear_command_line'):
-                from sys import stdout
-                stdout.write(' ' * get_terminal_size()[1] + '\r')
+                sys.stdout.write(' ' * utils.get_terminal_size()[1] + '\r')
             self._logger._log(level, message, None)
 
     def info(self, message, *args, **kwargs):
@@ -118,12 +123,12 @@ class CommandTool(object):
         values_str = u'/'.join(values) if values else '<answer>'
         if allow_remember:
             values_str += u' [all]'
-        pr = u"{0} ({1})? ".format(promt, values_str)
+        promt_str = u"{0} ({1})? ".format(promt, values_str).encode('cp1251')
 
         inp = ['']
         values = values or ['']
         while inp[0] not in values:
-            inp = raw_input(pr.encode('cp1251'))
+            inp = raw_input(promt_str)
             inp = inp.split(' ')
         if allow_remember and len(inp) > 1 and inp[1] == 'all':
             self.conf['confirm_permanent'][code] = inp[0]
@@ -135,8 +140,7 @@ class CommandTool(object):
         self.conf['speed'] = []
 
     def _set_speed(self, t_before, size):
-        from time import time
-        _t = time() - t_before
+        _t = time.time() - t_before
         _t = (float(size) / _t) if _t else 0
         if not self.conf.get('speed'):
             self.conf['speed'] = []
@@ -168,19 +172,20 @@ class CommandTool(object):
         if not self._init_success:
             return
 
-        parser = OptionParser(usage=u"usage: %prog [options] arg1 [arg2...]")
-        for o in self.options:
-            o = list(o)
-            p = o.pop()
-            parser.add_option(*o, **p)
+        parser = optparse.OptionParser(
+            usage=u"usage: %prog [options] arg1 [arg2...]")
+        for opt in self.options:
+            opt = list(opt)
+            opt_kw = opt.pop()
+            parser.add_option(*opt, **opt_kw)
         self.opt, self.args = parser.parse_args()
-        for k, v in self.opt.__dict__.iteritems():
-            if v:
-                self.conf[k] = v
+        for key, value in self.opt.__dict__.iteritems():
+            if value:
+                self.conf[key] = value
 
         if self.conf.get('config_file'):
             self._load_config_file(self.conf['config_file'])
-            
+
         self.handler(cli=True)
 
     def handler(self, cli=False):
@@ -202,23 +207,3 @@ class CommandTool(object):
 
     class InitError(Error):
         pass
-
-
-def get_terminal_size(fd=1):
-    """
-    Returns height and width of current terminal. First tries to get
-    size via termios.TIOCGWINSZ, then from environment. Defaults to 25
-    lines x 80 columns if both methods fail.
-
-    :param fd: file descriptor (default: 1=stdout)
-    """
-    try:
-        import fcntl, termios, struct
-        hw = struct.unpack('hh', fcntl.ioctl(fd, termios.TIOCGWINSZ, '1234'))
-    except:
-        try:
-            hw = (os.environ['LINES'], os.environ['COLUMNS'])
-        except:
-            hw = (25, 80)
-
-    return hw
