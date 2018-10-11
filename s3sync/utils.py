@@ -17,15 +17,16 @@ def file_hash(f_path):
     return hash_.hexdigest()
 
 
-def list_remote_dir(bucket, opt):
+def list_remote_dir(bucket, compare_path, recursive=False):
     if not bucket:
         return False
 
     params = dict()
-    if not opt.get('recursive'):
+    if not recursive:
         params['delimiter'] = '/'
-    if opt.get('compare_path'):
-        params['prefix'] = opt['compare_path'].replace('\\', '/')
+
+    if compare_path:
+        params['prefix'] = compare_path.replace('\\', '/')
         if params['prefix'][-1] != '/':
             params['prefix'] += '/'
 

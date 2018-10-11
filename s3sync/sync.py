@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-from __future__ import print_function
+from __future__ import absolute_import, print_function, unicode_literals
 
+import argparse
 import datetime
+import logging
 import os
 import sys
 import threading
@@ -13,8 +15,10 @@ import boto.s3.key
 
 from . import commandtool, utils
 
-UPLOAD_FMT = "{speed}\r"
-# UPLOAD_FMT = "[{progress}>{left}] {progress_percent}% {speed}\r"
+# UPLOAD_FMT = '{speed}\r'
+UPLOAD_FMT = '[{progress}>{left}] {progress_percent}% {speed}\r'
+
+# logger = logging.getLogger(__name__)
 
 
 class UploadThread(threading.Thread):
@@ -23,95 +27,146 @@ class UploadThread(threading.Thread):
         self.result = 0
 
     def run(self):
-        if self.__target:
-            self.result = self.__target(*self.__args, **self.__kwargs)
-        else:
-            self.result = 0
+        try:
+            self.run()
+        except KeyboardInterrupt:
+            pass
+        except:
+            logging.exception('thread failed!')
+
+
+CLR_END = '\033[0m'
+
+
+def error(message):
+    CLR_FAIL = '\033[91m'
+    print(CLR_FAIL + message + CLR_END)
+
+
+def warn(message):
+    CLR_WARNING = '\033[93m'
+    print(CLR_WARNING + message + CLR_END)
+
+
+def success(message):
+    CLR_OKGREEN = '\033[92m'
+    print(CLR_OKGREEN + message + CLR_END)
 
 
 class S3SyncTool(commandtool.CommandTool):
+    def run_cli(self):
+        self._load_config_file(os.path.join(os.getcwd(), '.s3sync'))
+
+        if not self.conf.get('access_key') or not self.conf.get('secret_key'):
+            return self.error('missing access or secret key')
+
+        self.info('connecting s3...')
+        # os.environ['S3_USE_SIGV4'] = 'True'
+        self.conn = boto.s3.connection.S3Connection(
+            self.conf.get('access_key'), self.conf.get('secret_key'))
+
+        parser = argparse.ArgumentParser()
+
+        # TODO: init
+        subparsers = parser.add_subparsers()
+        cmd = subparsers.add_parser('buckets', help='list buckets')
+        cmd.set_defaults(func=self.on_list_buckets)
+
+        cmd = subparsers.add_parser('list', help='list files')
+        cmd.set_defaults(func=self.on_list)
+        cmd.add_argument(
+            '-b', '--bucket', action='store', help='bucket')
+        cmd.add_argument(
+            '-p', '--path',
+            action='store', type=str, help='path to compare')
+        cmd.add_argument(
+            '-r', '--recursive', action='store_true', help='list recursive')
+        cmd.add_argument(
+            '-l', '--limit',
+            action='store', default=10, type=int, help='output limit')
+
+        cmd = subparsers.add_parser('diff', help='diff local and remote')
+        cmd.set_defaults(func=self.on_diff)
+        cmd.add_argument(
+            '-p', '--path',
+            action='store', type=str, default='', help='path to compare')
+        cmd.add_argument(
+            '-r', '--recursive', action='store_true', help='list recursive')
+
+        cmd = subparsers.add_parser('update', help='update local or remote')
+        cmd.set_defaults(func=self.on_update)
+        cmd.add_argument(
+            '-p', '--path',
+            action='store', type=str, default='', help='path to compare')
+        cmd.add_argument(
+            '-q', '--quiet',
+            action='store_true', help='quiet (no interactive)')
+        cmd.add_argument(
+            '-r', '--recursive', action='store_true', help='list recursive')
+        cmd.add_argument(
+            '--confirm-upload',
+            action='store_true', help='confirm upload action')
+        cmd.add_argument(
+            '--confirm-download',
+            action='store_true', help='confirm download action')
+        cmd.add_argument(
+            '--confirm-replace-upload',
+            action='store_true', help='confirm replace on upload')
+        cmd.add_argument(
+            '--confirm-replace-download',
+            action='store_true', help='confirm replace on download')
+        cmd.add_argument(
+            '--confirm-delete-local',
+            action='store_true', help='confirm delete local file')
+        cmd.add_argument(
+            '--confirm-delete-remote',
+            action='store_true', help='confirm delete remote file')
+        cmd.add_argument(
+            '--confirm-rename-remote',
+            action='store_true', help='confirm rename remote file')
+        cmd.add_argument(
+            '--force-upload',
+            action='store_true',
+            help='data transfer direction force change to upload')
+
+        namespace = parser.parse_args()
+
+        if getattr(namespace, 'func', None):
+            try:
+                return namespace.func(namespace)
+            except KeyboardInterrupt:
+                return error('Interrupted')
+            except Exception as exc:
+                logging.exception('!!!')
+                return error(exc.args[0])
+
+        parser.print_help()
+
 
     options = commandtool.CommandTool.options + [
-        ("-A", "--access-key", dict(
-            action="store",
-            dest="access_key",
-            help="AWS S3 access key")),
-        ("-S", "--secret-key", dict(
-            action="store",
-            dest="secret_key",
-            help="AWS S3 secret key")),
-        ("-R", "--recursive", dict(
-            action="store_true",
-            dest="recursive",
-            help="list/compare recursively")),
-        ("-b", "--bucket", dict(
-            action="store",
-            dest="bucket",
-            help="bucket name")),
-        ("-r", "--local-root", dict(
-            action="store",
-            dest="local_root",
-            help="root path to compare with")),
-        ("-n", "--list-limit", dict(
-            action="store",
-            dest="list_limit",
-            metavar="LIMIT",
-            help="limit of listings")),
-        ("--modes", dict(
-            action="store",
-            dest="modes",
-            help="modes of comparing (by default: -=<>+)")),
-        ("--file-types", dict(
-            action="store",
-            dest="file_types",
-            help="file types for compare")),
-        ("--confirm-upload", dict(
-            action="store_true",
-            dest="confirm_upload",
-            help="confirm upload action")),
-        ("--confirm-download", dict(
-            action="store_true",
-            dest="confirm_download",
-            help="confirm download action")),
-        ("--confirm-replace-upload", dict(
-            action="store_true",
-            dest="confirm_replace_upload",
-            help="confirm replace on upload")),
-        ("--confirm-replace-download", dict(
-            action="store_true",
-            dest="confirm_replace_download",
-            help="confirm replace on download")),
-        ("--confirm-delete-local", dict(
-            action="store_true",
-            dest="confirm_delete_local",
-            help="confirm delete local file")),
-        ("--confirm-delete-remote", dict(
-            action="store_true",
-            dest="confirm_delete_remote",
-            help="confirm delete remote file")),
-        ("--confirm-rename-remote", dict(
-            action="store_true",
-            dest="confirm_rename_remote",
-            help="confirm rename remote file")),
-        ("--force-upload", dict(
-            action="store_true",
-            dest="force_upload",
-            help="data transfer direction force change to upload")),
-        ("--skip-md5-compare", dict(
-            action="store_true",
-            dest="skip_md5",
-            help="skip file content comparing")),
+        ('--modes', dict(
+            action='store',
+            dest='modes',
+            help='modes of comparing (by default: -=<>+)')),
+        ('--file-types', dict(
+            action='store',
+            dest='file_types',
+            help='file types for compare')),
+        ('--skip-md5-compare', dict(
+            action='store_true',
+            dest='skip_md5',
+            help='skip file content comparing')),
     ]
 
-    def __init__(self, *args, **kwargs):
-        super(S3SyncTool, self).__init__(*args, **kwargs)
+    def __init__(self, **kwargs):
+        super(S3SyncTool, self).__init__(**kwargs)
         self.conn = None
 
     @staticmethod
     def default_config():
         conf = commandtool.CommandTool.default_config()
         conf.update(
-            key_pat=u"{name} {storage} {size} {modified} {owner} {md5}",
+            key_pat='{name} {storage} {size} {modified} {owner} {md5}',
             key_pat_name_len=60,
             list_limit=20,
             # config_file=__file__.split('.')[0] + '.yaml',
@@ -124,18 +179,7 @@ class S3SyncTool(commandtool.CommandTool):
         )
         return conf
 
-    def handler(self, cli=False):
-        if not self.conf.get('access_key') or not self.conf.get('secret_key'):
-            return self.error('missing access or secret key')
-
-        self.info('connecting s3...')
-        # os.environ['S3_USE_SIGV4'] = 'True'
-        self.conn = boto.s3.connection.S3Connection(
-            self.conf.get('access_key'), self.conf.get('secret_key'))
-
-        super(S3SyncTool, self).handler(cli)
-
-    def bucket(self):
+    def bucket(self, name=None):
         for region in boto.s3.regions():
             if (self.conf.get('allowed_regions')
                     and region.name not in self.conf['allowed_regions']):
@@ -146,33 +190,57 @@ class S3SyncTool(commandtool.CommandTool):
                 host=region.endpoint)
             if not conn:
                 continue
-            bucket = conn.lookup(self.conf['bucket'], validate=True)
+            bucket = conn.lookup(name or self.conf['bucket'], validate=True)
             if bucket is not None:
                 return bucket
         return None
 
-    def on_list_buckets(self):
+    def confirm(
+            self, promt, code, quite=False, values=None, allow_remember=False):
+        if quite:
+            return 'n'
+        if allow_remember and code in self.conf['confirm_permanent']:
+            return self.conf['confirm_permanent'][code]
+
+        values = list(values)
+        if 'n' not in values:
+            values.append('n')
+
+        values_str = u'/'.join(values) if values else '<answer>'
+        if allow_remember:
+            values_str += u' [all]'
+        promt_str = u"{0} ({1})? ".format(promt, values_str).encode('cp1251')
+
+        inp = ['']
+        values = values or ['']
+        while inp[0] not in values:
+            inp = raw_input(promt_str)
+            inp = inp.split(' ')
+        if allow_remember and len(inp) > 1 and inp[1] == 'all':
+            self.conf['confirm_permanent'][code] = inp[0]
+        return inp[0]
+
+    def on_list_buckets(self, namespace):
         self.info('listing buckets:')
         for bucket in self.conn.get_all_buckets():
             self.log(bucket.name)
 
-    def on_list(self):
-        if len(self.args) < 2:
-            self.conf['compare_path'] = ''
-        else:
-            self.conf['compare_path'] = self.args[1]
+    def on_list(self, namespace):
+        bucket = utils.list_remote_dir(
+            self.bucket(namespace.bucket),
+            namespace.path,
+            recursive=namespace.recursive)
 
-        bucket = utils.list_remote_dir(self.bucket(), self.conf)
         if bucket is False:
             return self.error('missing bucket')
 
         for index, key in bucket:
-            if index >= self.conf['list_limit']:
-                self.info("list limit reached!")
+            if index >= namespace.limit > 0:
+                self.info('list limit reached!')
                 break
             self._print_key(key)
 
-    def on_diff(self, print_=True):
+    def on_diff(self, namespace, print_=True):
         if not self.conf.get('local_root'):
             return self.error('missing local root directory reference')
         else:
@@ -183,22 +251,25 @@ class S3SyncTool(commandtool.CommandTool):
             if local_root_s[-1] != '/':
                 local_root_s += '/'
 
-        if len(self.args) < 2:
-            self.conf['compare_path'] = ''
-        else:
-            self.conf['compare_path'] = self.args[1]
-
-        src_path = os.path.join(
-            self.conf['local_root'], self.conf['compare_path'])
+        src_path = os.path.join(self.conf['local_root'], namespace.path)
         src_files = []
-        if self.conf.get('recursive'):
+        if namespace.recursive:
             for dir_path, __, file_names in os.walk(src_path):
                 for file_ in file_names:
                     if not self._check_file_type(file_):
                         continue
-                    f_path = os.path.join(dir_path, file_)
-                    key = f_path.replace('\\', '/').replace(
-                        local_root_s, '').decode('cp1251').lower()
+                    key = f_path = os.path.join(dir_path, file_)
+
+                    try:
+                        key = key.decode('utf8')
+                    except UnicodeEncodeError:
+                        try:
+                            key = key.decode('cp1251')
+                        except UnicodeDecodeError:
+                            key = key
+
+                    key = key.replace('\\', '/').replace(
+                        local_root_s, '').lower()
                     src_files.append((key, f_path))
         else:
             for file_ in os.listdir(src_path):
@@ -207,13 +278,25 @@ class S3SyncTool(commandtool.CommandTool):
                 f_path = os.path.join(src_path, file_)
                 if not os.path.isfile(f_path):
                     continue
-                key = os.path.join(self.conf['compare_path'], file_).replace(
-                    '\\', '/').decode('cp1251').lower()
+
+                key = os.path.join(namespace.path, file_)
+
+                try:
+                    key = key.decode('utf8')
+                except UnicodeEncodeError:
+                    try:
+                        key = key.decode('cp1251')
+                    except UnicodeEncodeError:
+                        key = key
+
+                key = key.replace('\\', '/').lower()
                 src_files.append((key, f_path))
-        self.info(u"{0} local objects", len(src_files))
+
+        self.info('{0} local objects', len(src_files))
 
         remote_files = dict()
-        ls_remote = utils.list_remote_dir(self.bucket(), self.conf)
+        ls_remote = utils.list_remote_dir(
+            self.bucket(), namespace.path, recursive=namespace.recursive)
         if ls_remote is False:
             return self.error('missing bucket')
 
@@ -222,21 +305,22 @@ class S3SyncTool(commandtool.CommandTool):
                 continue
             if not self._check_file_type(file_.name):
                 continue
+
             remote_files[file_.name.lower()] = dict(
                 key=file_,
                 name=file_.name,
                 size=file_.size,
                 modified=file_.last_modified,
                 md5=file_.etag[1:-1],
-                state=u'-',
+                state='-',
                 comment=[],
             )
-        self.info(u"{0} remote objects", len(remote_files.keys()))
+        self.info('{0} remote objects', len(remote_files.keys()))
 
         if not src_files and not remote_files:
             return
 
-        self.info(u"comparing...")
+        self.info('comparing...')
         for key, f_path in src_files:
             stat = os.stat(f_path)
 
@@ -244,7 +328,7 @@ class S3SyncTool(commandtool.CommandTool):
                 equal = True
                 if stat.st_size != remote_files[key]['size']:
                     equal = False
-                    remote_files[key]['comment'].append(u"size: {0}%".format(
+                    remote_files[key]['comment'].append('size: {0}%'.format(
                         round(float(
                             remote_files[key]['size']) / stat.st_size * 100, 2)
                     ))
@@ -252,7 +336,7 @@ class S3SyncTool(commandtool.CommandTool):
                     hash_ = utils.file_hash(f_path)
                     if hash_ != remote_files[key]['md5']:
                         equal = False
-                        remote_files[key]['comment'].append(u"md5: different")
+                        remote_files[key]['comment'].append('md5: different')
 
                 if equal:
                     remote_files[key].update(state='=', comment=[])
@@ -262,11 +346,11 @@ class S3SyncTool(commandtool.CommandTool):
                         stat.st_ctime).replace(microsecond=0)
                     remote_modified = datetime.datetime.strptime(
                         remote_files[key]['modified'],
-                        u"%Y-%m-%dT%H:%M:%S.000Z")
+                        '%Y-%m-%dT%H:%M:%S.000Z')
                     remote_modified += datetime.timedelta(hours=4)
 
                     remote_files[key]['comment'].append(
-                        u"modified: {0}".format(
+                        'modified: {0}'.format(
                             local_modified - remote_modified))
                     if local_modified > remote_modified:
                         remote_files[key]['state'] = '>'
@@ -307,7 +391,7 @@ class S3SyncTool(commandtool.CommandTool):
                         local_size=new_data['local_size']
                     )
                     remote_files[name]['comment'].append(
-                        u'new: {0}'.format(key))
+                        'new: {0}'.format(key))
                     to_del.append(key)
                     break
             for key in to_del:
@@ -323,12 +407,12 @@ class S3SyncTool(commandtool.CommandTool):
             keys.sort()
             for key in keys:
                 self._print_diff_line(key, remote_files[key])
-            self.info(u"{0} differences", len(remote_files.keys()))
+            self.info('{0} differences', len(remote_files.keys()))
         else:
             return remote_files
 
-    def on_update(self):
-        files = self.on_diff(print_=False)
+    def on_update(self, namespace):
+        files = self.on_diff(namespace, print_=False)
         self.info('processing...')
         processed = 0
         threads = []
@@ -341,43 +425,48 @@ class S3SyncTool(commandtool.CommandTool):
                     processed += 1
                     continue
                 elif data['state'] == '+':
-                    if self.conf.get('confirm_upload'):
+                    if namespace.confirm_upload:
                         data['action'] = 'upload'
-                    elif self.conf.get('confirm_delete_local'):
+                    elif namespace.confirm_delete_local:
                         data['action'] = 'delete_local'
                     else:
                         act = self._confirm_update(
-                            name, data, 'upload', 'delete_local')
+                            name, data, namespace.quite,
+                            'upload', 'delete_local')
                         if act == 'n':
                             continue
                         else:
                             data['action'] = act
                 elif data['state'] == '-':
-                    if self.conf.get('confirm_download'):
+                    if namespace.confirm_download:
                         data['action'] = 'download'
-                    elif self.conf.get('confirm_delete_remote'):
+                    elif namespace.confirm_delete_remote:
                         data['action'] = 'delete_remote'
                     else:
                         act = self._confirm_update(
-                            name, data, 'download', 'delete_remote')
+                            name, data, namespace.quite,
+                            'download', 'delete_remote')
                         if act == 'n':
                             continue
                         else:
                             data['action'] = act
-                elif data['state'] == '>' or self.conf.get('force_upload'):
+                elif data['state'] == '>' or namespace.force_upload:
                     data['state'] = '>'
-                    if (not self.conf.get('confirm_replace_upload')
-                            and self._confirm_update(name, data, 'y') == 'n'):
+                    if (not namespace.confirm_replace_upload
+                            and self._confirm_update(
+                                name, data, namespace.quite, 'y') == 'n'):
                         continue
                     data['action'] = 'replace_upload'
                 elif data['state'] == '<':
-                    if (not self.conf.get('confirm_replace_download')
-                            and self._confirm_update(name, data, 'y') == 'n'):
+                    if (not namespace.confirm_replace_download
+                            and self._confirm_update(
+                                name, data, namespace.quite, 'y') == 'n'):
                         continue
                     data['action'] = 'replace_download'
                 elif data['state'] == 'r':
-                    if (not self.conf.get('confirm_rename_remote')
-                            and self._confirm_update(name, data, 'y') == 'n'):
+                    if (not namespace.confirm_rename_remote
+                            and self._confirm_update(
+                                name, data, namespace.quite, 'y') == 'n'):
                         continue
                     data['action'] = 'rename_remote'
 
@@ -388,7 +477,7 @@ class S3SyncTool(commandtool.CommandTool):
                     while len(threads) >= self.conf['thread_max_count']:
                         thr_last = threads.pop()
                         thr_last.join()
-                    thr = threading.Thread(
+                    thr = UploadThread(
                         target=self._update_process, args=(name, data))
                     threads.append(thr)
                     thr.start()
@@ -404,9 +493,9 @@ class S3SyncTool(commandtool.CommandTool):
         finally:
             self._del_speed()
             self._set_speed(_t, _size)
-            self.info(u"average speed: {0}", self._get_speed())
+            self.info('average speed: {0}', self._get_speed())
             self.info(
-                u"{0} actions processed, {1} skipped",
+                '{0} actions processed, {1} skipped',
                 processed, len(files.keys()) - processed
             )
 
@@ -416,10 +505,10 @@ class S3SyncTool(commandtool.CommandTool):
             self._print_diff_line(name, data)
             return 1
         except (AttributeError, NotImplementedError):
-            self.error(u'not developed yet')
+            self.error('not developed yet')
             return 0
         except Exception:
-            self.error(u'file {0} update failed', name)
+            self.error('file {0} update failed', name)
             raise
 
     def _update_replace_upload(self, name, data):
@@ -434,7 +523,7 @@ class S3SyncTool(commandtool.CommandTool):
             if data.get('local_size'):
                 self._set_speed(_t, data['local_size'])
 
-        data['comment'] = [u'uploaded(replaced)']
+        data['comment'] = ['uploaded(replaced)']
 
     def _update_upload(self, name, data):
         bucket = self.bucket()
@@ -449,11 +538,11 @@ class S3SyncTool(commandtool.CommandTool):
                 encrypt_key=False, rewind=True)
             if data.get('local_size'):
                 self._set_speed(_t, data['local_size'])
-        data['comment'] = [u'uploaded']
+        data['comment'] = ['uploaded']
 
     def _update_delete_remote(self, __, data):
         data['key'].delete()
-        data['comment'] = [u'deleted from s3']
+        data['comment'] = ['deleted from s3']
 
     def _update_rename_remote(self, __, data):
         new_key = data['key'].copy(
@@ -463,7 +552,7 @@ class S3SyncTool(commandtool.CommandTool):
             encrypt_key=False, validate_dst_bucket=True)
         if new_key:
             data['key'].delete()
-            data['comment'] = [u'renamed']
+            data['comment'] = ['renamed']
         else:
             raise Exception('s3 key copy failed')
 
@@ -507,20 +596,21 @@ class S3SyncTool(commandtool.CommandTool):
         self.conf['to_clear_command_line'] = True
 
     def _action_cb(self, uploaded, full):
-        pr_line = "|/-\\"
+        pr_line = '|/-\\'
         if '_action_progress' not in self.conf:
             self.conf['_action_progress'] = 0
         else:
             self.conf['_action_progress'] += 1
-        sys.stdout.write("{0}\r".format(
+        sys.stdout.write('{0}\r'.format(
             pr_line[self.conf['_action_progress'] % len(pr_line)]))
         self.conf['to_clear_command_line'] = True
 
-    def _confirm_update(self, name, data, *values):
+    def _confirm_update(self, name, data, quite, *values):
         return self.confirm(
-            u"{0} {1} {2}".format(
+            '{0} {1} {2}'.format(
                 data['state'], name, ', '.join(data.get('comment', []))),
             data['state'],
+            quite=quite,
             values=values,
             allow_remember=True)
 
@@ -531,13 +621,13 @@ class S3SyncTool(commandtool.CommandTool):
             REDUCED_REDUNDANCY='R',
         )
         name = \
-            key.name.ljust(self.conf['key_pat_name_len'], " ") \
+            key.name.ljust(self.conf['key_pat_name_len'], ' ') \
             if len(key.name) < self.conf['key_pat_name_len'] \
             else key.name[:self.conf['key_pat_name_len'] - 3] + '...'
         if isinstance(key, boto.s3.key.Key):
             params = dict(
                 name=name,
-                size=str(key.size).ljust(10, " "),
+                size=str(key.size).ljust(10, ' '.encode('ascii')),
                 owner=key.owner.display_name,
                 modified=key.last_modified,
                 storage=storage.get(key.storage_class, '?'),
@@ -546,7 +636,7 @@ class S3SyncTool(commandtool.CommandTool):
         else:
             params = dict(
                 name=name,
-                size='<DIR>'.ljust(10, " "),
+                size='<DIR>'.ljust(10, ' '),
                 owner='',
                 modified='',
                 storage='?',
@@ -557,7 +647,7 @@ class S3SyncTool(commandtool.CommandTool):
 
     def _print_diff_line(self, name, data):
         self.info(
-            u"{0} {1} {2}",
+            '{0} {1} {2}',
             data['state'],
             name,
             ', '.join(data.get('comment', []))

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
-import optparse
+import argparse
 import os
 import sys
 import time
@@ -26,14 +26,10 @@ class CommandTool(object):
     def __init__(self, **options):
         self.conf = self.default_config()
         self.opt, self.args = None, None
+
         try:
-            self._load_config_file(self.conf['config_file'])
-
             if options:
-                if options.get('config_file'):
-                    self._load_config_file(options['config_file'])
                 self.conf.update(options)
-
             self._init_log()
             self._init_success = True
 
@@ -46,7 +42,7 @@ class CommandTool(object):
         path = os.path.dirname(__file__)
         configuration = dict(
             bin_path=path,
-            config_file=os.path.join(path, 'config.yaml'),
+            config_file=os.path.join(os.getcwd(), '.s3sync'),
             log_file=False,
             log_name=__name__,
             log_level=0,
@@ -109,30 +105,6 @@ class CommandTool(object):
     def error(self, message, *args, **kwargs):
         self.log('! ' + message, logging.ERROR, *args, **kwargs)
         return False
-
-    def confirm(self, promt, code, values=None, allow_remember=False):
-        if self.conf.get('quiet'):
-            return 'n'
-        if allow_remember and code in self.conf['confirm_permanent']:
-            return self.conf['confirm_permanent'][code]
-
-        values = list(values)
-        if 'n' not in values:
-            values.append('n')
-
-        values_str = u'/'.join(values) if values else '<answer>'
-        if allow_remember:
-            values_str += u' [all]'
-        promt_str = u"{0} ({1})? ".format(promt, values_str).encode('cp1251')
-
-        inp = ['']
-        values = values or ['']
-        while inp[0] not in values:
-            inp = raw_input(promt_str)
-            inp = inp.split(' ')
-        if allow_remember and len(inp) > 1 and inp[1] == 'all':
-            self.conf['confirm_permanent'][code] = inp[0]
-        return inp[0]
 
     def _del_speed(self):
         if 'speed' in self.conf:
