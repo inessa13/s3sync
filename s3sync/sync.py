@@ -88,21 +88,45 @@ class S3SyncTool(commandtool.CommandTool):
         cmd = subparsers.add_parser('diff', help='diff local and remote')
         cmd.set_defaults(func=self.on_diff)
         cmd.add_argument(
+            '-f', '--file-types',
+            action='store',
+            help='file types (extension) for compare')
+        cmd.add_argument(
+            '-m', '--modes',
+            action='store', default='-<>+',
+            help='modes of comparing (by default: -=<>+)')
+        cmd.add_argument(
             '-p', '--path',
-            action='store', type=str, default='', help='path to compare')
+            action='store', default='', help='path to compare')
         cmd.add_argument(
             '-r', '--recursive', action='store_true', help='list recursive')
+        cmd.add_argument(
+            '--skip-md5',
+            action='store_true',
+            help='skip file content comparing')
 
         cmd = subparsers.add_parser('update', help='update local or remote')
         cmd.set_defaults(func=self.on_update)
         cmd.add_argument(
+            '-f', '--file-types',
+            action='store',
+            help='file types (extension) for compare')
+        cmd.add_argument(
+            '-m', '--modes',
+            action='store', default='-<>+',
+            help='modes of comparing (values: -=<>+)')
+        cmd.add_argument(
             '-p', '--path',
-            action='store', type=str, default='', help='path to compare')
+            action='store', default='', help='path to compare')
         cmd.add_argument(
             '-q', '--quiet',
             action='store_true', help='quiet (no interactive)')
         cmd.add_argument(
             '-r', '--recursive', action='store_true', help='list recursive')
+        cmd.add_argument(
+            '--skip-md5',
+            action='store_true',
+            help='skip file content comparing')
         cmd.add_argument(
             '--confirm-upload',
             action='store_true', help='confirm upload action')
@@ -143,21 +167,6 @@ class S3SyncTool(commandtool.CommandTool):
         parser.print_help()
 
 
-    options = commandtool.CommandTool.options + [
-        ('--modes', dict(
-            action='store',
-            dest='modes',
-            help='modes of comparing (by default: -=<>+)')),
-        ('--file-types', dict(
-            action='store',
-            dest='file_types',
-            help='file types for compare')),
-        ('--skip-md5-compare', dict(
-            action='store_true',
-            dest='skip_md5',
-            help='skip file content comparing')),
-    ]
-
     def __init__(self, **kwargs):
         super(S3SyncTool, self).__init__(**kwargs)
         self.conn = None
@@ -196,8 +205,8 @@ class S3SyncTool(commandtool.CommandTool):
         return None
 
     def confirm(
-            self, promt, code, quite=False, values=None, allow_remember=False):
-        if quite:
+            self, promt, code, quiet=False, values=None, allow_remember=False):
+        if quiet:
             return 'n'
         if allow_remember and code in self.conf['confirm_permanent']:
             return self.conf['confirm_permanent'][code]
@@ -256,7 +265,7 @@ class S3SyncTool(commandtool.CommandTool):
         if namespace.recursive:
             for dir_path, __, file_names in os.walk(src_path):
                 for file_ in file_names:
-                    if not self._check_file_type(file_):
+                    if not self._check_file_type(file_, namespace.file_types):
                         continue
                     key = f_path = os.path.join(dir_path, file_)
 
@@ -273,7 +282,7 @@ class S3SyncTool(commandtool.CommandTool):
                     src_files.append((key, f_path))
         else:
             for file_ in os.listdir(src_path):
-                if not self._check_file_type(file_):
+                if not self._check_file_type(file_, namespace.file_types):
                     continue
                 f_path = os.path.join(src_path, file_)
                 if not os.path.isfile(f_path):
@@ -303,7 +312,7 @@ class S3SyncTool(commandtool.CommandTool):
         for __, file_ in ls_remote:
             if not isinstance(file_, boto.s3.key.Key) or file_.name[-1] == '/':
                 continue
-            if not self._check_file_type(file_.name):
+            if not self._check_file_type(file_.name, namespace.file_types):
                 continue
 
             remote_files[file_.name.lower()] = dict(
@@ -332,7 +341,7 @@ class S3SyncTool(commandtool.CommandTool):
                         round(float(
                             remote_files[key]['size']) / stat.st_size * 100, 2)
                     ))
-                elif not self.conf.get('skip_md5'):
+                elif not namespace.skip_md5:
                     hash_ = utils.file_hash(f_path)
                     if hash_ != remote_files[key]['md5']:
                         equal = False
@@ -357,11 +366,11 @@ class S3SyncTool(commandtool.CommandTool):
                     else:
                         remote_files[key]['state'] = '<'
 
-                if remote_files[key]['state'] not in self.conf['modes']:
+                if remote_files[key]['state'] not in namespace.modes:
                     del remote_files[key]
             else:
-                if ('+' not in self.conf['modes']
-                        and 'r' not in self.conf['modes']):
+                if ('+' not in namespace.modes
+                        and 'r' not in namespace.modes):
                     continue
 
                 remote_files[key] = dict(
@@ -373,7 +382,7 @@ class S3SyncTool(commandtool.CommandTool):
                 )
 
         # find renames
-        if 'r' in self.conf['modes']:
+        if 'r' in namespace.modes:
             to_del = []
             for key, new_data in remote_files.iteritems():
                 if new_data['state'] != '+':
@@ -397,9 +406,9 @@ class S3SyncTool(commandtool.CommandTool):
             for key in to_del:
                 del remote_files[key]
 
-        if '-' not in self.conf['modes'] or '+' not in self.conf['modes']:
+        if '-' not in namespace.modes or '+' not in namespace.modes:
             for key, value in remote_files.items():
-                if value['state'] not in self.conf['modes']:
+                if value['state'] not in namespace.modes:
                     del remote_files[key]
 
         if print_:
@@ -431,7 +440,7 @@ class S3SyncTool(commandtool.CommandTool):
                         data['action'] = 'delete_local'
                     else:
                         act = self._confirm_update(
-                            name, data, namespace.quite,
+                            name, data, namespace.quiet,
                             'upload', 'delete_local')
                         if act == 'n':
                             continue
@@ -444,7 +453,7 @@ class S3SyncTool(commandtool.CommandTool):
                         data['action'] = 'delete_remote'
                     else:
                         act = self._confirm_update(
-                            name, data, namespace.quite,
+                            name, data, namespace.quiet,
                             'download', 'delete_remote')
                         if act == 'n':
                             continue
@@ -454,19 +463,19 @@ class S3SyncTool(commandtool.CommandTool):
                     data['state'] = '>'
                     if (not namespace.confirm_replace_upload
                             and self._confirm_update(
-                                name, data, namespace.quite, 'y') == 'n'):
+                                name, data, namespace.quiet, 'y') == 'n'):
                         continue
                     data['action'] = 'replace_upload'
                 elif data['state'] == '<':
                     if (not namespace.confirm_replace_download
                             and self._confirm_update(
-                                name, data, namespace.quite, 'y') == 'n'):
+                                name, data, namespace.quiet, 'y') == 'n'):
                         continue
                     data['action'] = 'replace_download'
                 elif data['state'] == 'r':
                     if (not namespace.confirm_rename_remote
                             and self._confirm_update(
-                                name, data, namespace.quite, 'y') == 'n'):
+                                name, data, namespace.quiet, 'y') == 'n'):
                         continue
                     data['action'] = 'rename_remote'
 
@@ -568,11 +577,12 @@ class S3SyncTool(commandtool.CommandTool):
             cb=self._action_cb, num_cb=20, torrent=False, version_id=None,
             res_download_handler=None, response_headers=None)
 
-    def _check_file_type(self, filename):
+    def _check_file_type(self, filename, types):
         filename = filename.lower()
-        if not self.conf.get('file_types'):
+        if not types:
             return True
-        file_types = self.conf['file_types'].lower().split(',')
+
+        file_types = types.lower().split(',')
         if file_types[0][0] == '^':
             exclude = True
             file_types[0] = file_types[0][1:]
@@ -605,12 +615,12 @@ class S3SyncTool(commandtool.CommandTool):
             pr_line[self.conf['_action_progress'] % len(pr_line)]))
         self.conf['to_clear_command_line'] = True
 
-    def _confirm_update(self, name, data, quite, *values):
+    def _confirm_update(self, name, data, quiet, *values):
         return self.confirm(
             '{0} {1} {2}'.format(
                 data['state'], name, ', '.join(data.get('comment', []))),
             data['state'],
-            quite=quite,
+            quiet=quiet,
             values=values,
             allow_remember=True)
 
