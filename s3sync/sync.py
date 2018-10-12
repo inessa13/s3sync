@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, print_function, unicode_literals
 
+import collections
 import argparse
 import datetime
 import logging
@@ -67,7 +68,7 @@ class S3SyncTool(object):
     def run_cli(self):
         parser = argparse.ArgumentParser()
 
-        # TODO: init
+        # TODO: init, rm
         subparsers = parser.add_subparsers()
         cmd = subparsers.add_parser('buckets', help='list buckets')
         cmd.set_defaults(func=self.on_list_buckets)
@@ -255,9 +256,6 @@ class S3SyncTool(object):
             if key:
                 src_files.append((key, src_path))
 
-        else:
-            raise UserError('Unknown object')
-
         self.info('{0} local objects', len(src_files))
 
         bucket = self.bucket()
@@ -274,7 +272,7 @@ class S3SyncTool(object):
             if not utils.check_file_type(file_.name, namespace.file_types):
                 continue
 
-            remote_files[file_.name.lower()] = dict(
+            remote_files[file_.name] = dict(
                 key=file_,
                 name=file_.name,
                 size=file_.size,
@@ -404,7 +402,6 @@ class S3SyncTool(object):
         processed = 0
         _size = 0
 
-        # speed_queue = Queue.Queue()
         pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT)
 
         for name, data in six.iteritems(files):
@@ -414,15 +411,15 @@ class S3SyncTool(object):
 
             elif data['state'] == '+':
                 if namespace.confirm_upload:
-                    action = tasks.UploadTask
+                    action = tasks.Upload()
                 elif namespace.confirm_delete_local:
-                    action = tasks.DeleteLocal
+                    action = tasks.DeleteLocal()
                 elif namespace.quiet:
                     continue
                 else:
                     act = self._confirm_update(
                         name, data,
-                        tasks.Upload, tasks.DeleteLocal)
+                        tasks.Upload(), tasks.DeleteLocal())
                     if act == 'n':
                         continue
                     else:
@@ -430,15 +427,15 @@ class S3SyncTool(object):
 
             elif data['state'] == '-':
                 if namespace.confirm_download:
-                    action = tasks.Download
+                    action = tasks.Download()
                 elif namespace.confirm_delete_remote:
-                    action = tasks.DeleteRemote
+                    action = tasks.DeleteRemote()
                 elif namespace.quiet:
                     continue
                 else:
                     act = self._confirm_update(
                         name, data,
-                        tasks.Download, tasks.DeleteRemote)
+                        tasks.Download(), tasks.DeleteRemote())
 
                     if act == 'n':
                         continue
@@ -449,21 +446,21 @@ class S3SyncTool(object):
                 if self._check(
                         name, data, namespace.quiet,
                         namespace.confirm_replace_upload):
-                    action = tasks.ReplaceUpload
+                    action = tasks.ReplaceUpload()
                 continue
 
             elif data['state'] == '<':
                 if self._check(
                         name, data, namespace.quiet,
                         namespace.confirm_replace_download):
-                    action = tasks.Download
+                    action = tasks.Download()
                 continue
 
             elif data['state'] == 'r':
                 if self._check(
                         name, data, namespace.quiet,
                         namespace.confirm_rename_remote):
-                    action = tasks.RenameRemote
+                    action = tasks.RenameRemote()
                 continue
 
             _size += data.get('local_size', 0)
@@ -496,22 +493,27 @@ class S3SyncTool(object):
         if code in self.confirm_permanent:
             return self.confirm_permanent[code]
 
-        values = [str(value) for value in values]
-        if 'n' not in values:
-            values.append('n')
+        values_map = collections.OrderedDict(
+            (str(value), value) for value in values)
+
+        if 'n' not in values_map:
+            values_map['n'] = 'n'
 
         prompt_str = '{} {} {} ({} [all])? '.format(
-            code, name, ', '.join(data.get('comment', [])), '/'.join(values))
+            code, name,
+            ', '.join(data.get('comment', [])),
+            '/'.join(six.iterkeys(values_map)),
+        )
 
         input_data = []
-        while not input_data or input_data[0] not in values:
+        while not input_data or input_data[0] not in values_map:
             input_data = six.moves.input(prompt_str.encode('utf8'))
             input_data = input_data.split(' ', 1)
 
         if len(input_data) > 1 and input_data[1] == 'all':
             self.confirm_permanent[code] = input_data[0]
 
-        return input_data[0]
+        return values_map[input_data[0]]
 
     def _print_key(self, key):
         name_len = self.conf.get(

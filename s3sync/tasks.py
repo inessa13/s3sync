@@ -40,7 +40,7 @@ class ThreadPool(object):
 
         self.task_queue = six.moves.queue.Queue(num_threads)
         for _ in six.moves.range(num_threads):
-            w = Worker(self.task_queue)
+            w = Worker(self.task_queue, self.result_queue)
             w.start()
 
     def add_task(self, func, *args, **kargs):
@@ -51,7 +51,10 @@ class ThreadPool(object):
 
 
 class Task(object):
-    def __init__(self, bucket, speed_queue, conf, name, data):
+    def handler(self):
+        raise NotImplementedError()
+
+    def __call__(self, bucket, speed_queue, conf, name, data):
         self.bucket = bucket
         self.speed_queue = speed_queue
         self.conf = conf
@@ -59,15 +62,12 @@ class Task(object):
         self.data = data
         self.handler()
 
-    def handler(self):
-        raise NotImplementedError()
-
     def _upload_cb(self, uploaded, full):
         len_full = 40
         progress = round(float(uploaded) / full, 2) * 100
         progress_len = int(progress) * len_full / 100
 
-        if self.speed_queue.qsize():
+        if False and self.speed_queue.qsize():
             count = self.speed_queue.qsize()
             speed_sum = sum(
                 self.speed_queue.get(i)
@@ -90,9 +90,11 @@ class Task(object):
             self.conf['_action_progress'] = 0
         else:
             self.conf['_action_progress'] += 1
-        sys.stdout.write('{0}\r'.format(
+
+        sys.stdout.write('{0}\n'.format(
             pr_line[self.conf['_action_progress'] % len(pr_line)]))
-        self.conf['to_clear_command_line'] = True
+
+        # TODO: self.conf['to_clear_command_line'] = True
 
 
 def _upload(key, local_root, name, callback, speed_queue, local_size, replace=False):
@@ -109,11 +111,14 @@ def _upload(key, local_root, name, callback, speed_queue, local_size, replace=Fa
             rewind=True,
         )
         delta = time.time() - time_start
-        if delta:
+        if delta and speed_queue:
             speed_queue.put(float(local_size / delta))
 
 
 class Upload(Task):
+    def __str__(self):
+        return 'upload'
+
     def handler(self):
         _upload(
             boto.s3.key.Key(bucket=self.bucket, name=self.name),
@@ -127,6 +132,9 @@ class Upload(Task):
 
 
 class ReplaceUpload(Task):
+    def __str__(self):
+        return 'upload_replace'
+
     def handler(self):
         _upload(
             self.data['key'],
@@ -141,12 +149,19 @@ class ReplaceUpload(Task):
 
 
 class DeleteRemote(Task):
+    def __str__(self):
+        return 'delete_remote'
+
     def handler(self):
         self.data['key'].delete()
         self.data['comment'] = ['deleted from s3']
+        self._action_cb(None, None)
 
 
 class RenameRemote(Task):
+    def __str__(self):
+        return 'rename_remote'
+
     def handler(self):
         new_key = self.data['key'].copy(
             self.conf['bucket'], self.data['local_name'],
@@ -162,14 +177,12 @@ class RenameRemote(Task):
 
 
 class Download(Task):
+    def __str__(self):
+        return 'download'
+
     def handler(self):
         self.data['key'].get_contents_to_filename(
             os.path.join(self.conf['local_root'], self.name),
-            headers=None,
             cb=self._action_cb,
             num_cb=20,
-            torrent=False,
-            version_id=None,
-            res_download_handler=None,
-            response_headers=None,
         )
