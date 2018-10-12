@@ -4,6 +4,7 @@ from __future__ import absolute_import, print_function, unicode_literals
 import argparse
 import datetime
 import logging
+import logging.config
 import os
 import sys
 import threading
@@ -12,13 +13,20 @@ import time
 import boto.s3
 import boto.s3.connection
 import boto.s3.key
+import yaml
+import six
 
-from . import commandtool, utils
+from . import settings, utils
 
-# UPLOAD_FMT = '{speed}\r'
-UPLOAD_FMT = '[{progress}>{left}] {progress_percent}% {speed}\r'
+logger = logging.getLogger(__name__)
 
-# logger = logging.getLogger(__name__)
+
+class BaseError(Exception):
+    pass
+
+
+class UserError(BaseError):
+    pass
 
 
 class UploadThread(threading.Thread):
@@ -53,7 +61,73 @@ def success(message):
     print(CLR_OKGREEN + message + CLR_END)
 
 
-class S3SyncTool(commandtool.CommandTool):
+class S3SyncTool(object):
+    def __init__(self):
+        self.conn = None
+        self.conf = {k.lower(): v for k, v in settings.__dict__.items()}
+
+    def _load_config_file(self, path):
+        if not os.path.exists(path):
+            return
+
+        try:
+            with open(path, 'r') as file_:
+                _loaded = yaml.load(file_)
+                if not _loaded:
+                    raise UserError('Config file is empty')
+            self.conf.update(_loaded)
+            self.info("load config file: '%s'", path)
+        except BaseError:
+            raise
+        except ImportError:
+            raise UserError('Missing yaml module')
+        except Exception as exc:
+            raise UserError('Error on config load', exc)
+
+    def log(self, message, level=logging.INFO, *args, **kwargs):
+        if self.conf.get('to_clear_command_line'):
+            sys.stdout.write(' ' * utils.get_terminal_size()[1] + '\r')
+            sys.stdout.write(message.format(*args, **kwargs))
+        if '%s' in message:
+            logger.log(level, message, *args, **kwargs)
+        else:
+            logger.log(level, message.format(*args, **kwargs))
+
+    def info(self, message, *args, **kwargs):
+        self.log(message, logging.INFO, *args, **kwargs)
+
+    def error(self, message, *args, **kwargs):
+        self.log('! ' + message, logging.ERROR, *args, **kwargs)
+        return False
+
+    def _del_speed(self):
+        if 'speed' in self.conf:
+            del self.conf['speed']
+        self.conf['speed'] = []
+
+    def _set_speed(self, t_before, size):
+        _t = time.time() - t_before
+        _t = (float(size) / _t) if _t else 0
+        if not self.conf.get('speed'):
+            self.conf['speed'] = []
+        self.conf['speed'].append(_t)
+
+    def _get_speed(self):
+        if not self.conf.get('speed'):
+            return 'n\\a'
+        info = 'Bps'
+        speed = float(sum(self.conf['speed'])) / len(self.conf['speed'])
+        if speed > 1024 ** 3:
+            speed /= 1024 ** 3
+            info = "GBps"
+        elif speed > 1024 ** 2:
+            speed /= 1024 ** 2
+            info = "MBps"
+        elif speed > 1024:
+            speed /= 1024
+            info = "KBps"
+        return "{0} {1}".format(round(speed, 2), info)
+
     def run_cli(self):
         self._load_config_file(os.path.join(os.getcwd(), '.s3sync'))
 
@@ -166,28 +240,6 @@ class S3SyncTool(commandtool.CommandTool):
 
         parser.print_help()
 
-
-    def __init__(self, **kwargs):
-        super(S3SyncTool, self).__init__(**kwargs)
-        self.conn = None
-
-    @staticmethod
-    def default_config():
-        conf = commandtool.CommandTool.default_config()
-        conf.update(
-            key_pat='{name} {storage} {size} {modified} {owner} {md5}',
-            key_pat_name_len=60,
-            list_limit=20,
-            # config_file=__file__.split('.')[0] + '.yaml',
-            modes='-=<>+',
-            confirm_permanent=dict(),
-            compare_hash=True,
-            thread_max_count=24,
-            upload_cb_num=5,
-            upload_format=UPLOAD_FMT,
-        )
-        return conf
-
     def bucket(self, name=None):
         for region in boto.s3.regions():
             if (self.conf.get('allowed_regions')
@@ -223,7 +275,7 @@ class S3SyncTool(commandtool.CommandTool):
         inp = ['']
         values = values or ['']
         while inp[0] not in values:
-            inp = raw_input(promt_str)
+            inp = six.moves.input(promt_str)
             inp = inp.split(' ')
         if allow_remember and len(inp) > 1 and inp[1] == 'all':
             self.conf['confirm_permanent'][code] = inp[0]
@@ -384,10 +436,10 @@ class S3SyncTool(commandtool.CommandTool):
         # find renames
         if 'r' in namespace.modes:
             to_del = []
-            for key, new_data in remote_files.iteritems():
+            for key, new_data in six.iteritems(remote_files):
                 if new_data['state'] != '+':
                     continue
-                for name, data in remote_files.iteritems():
+                for name, data in six.iteritems(remote_files):
                     if data['state'] != '-':
                         continue
                     if data['size'] != new_data['local_size']:
@@ -429,7 +481,7 @@ class S3SyncTool(commandtool.CommandTool):
         _size = 0
 
         try:
-            for name, data in files.iteritems():
+            for name, data in six.iteritems(files):
                 if data['state'] == '=':
                     processed += 1
                     continue
@@ -653,7 +705,7 @@ class S3SyncTool(commandtool.CommandTool):
                 md5=''
             )
 
-        self.log(unicode(self.conf['key_pat']).format(**params))
+        self.log(six.text_type(self.conf['key_pat']).format(**params))
 
     def _print_diff_line(self, name, data):
         self.info(
@@ -666,8 +718,14 @@ class S3SyncTool(commandtool.CommandTool):
 
 def main():
     tool = S3SyncTool()
+
+    if settings.LOGGING:
+        logging.config.dictConfig(settings.LOGGING)
+
     try:
         tool.run_cli()
+    except UserError as exc:
+        tool.error(exc.args[0])
     except KeyboardInterrupt:
         tool.log('interrupted')
 
