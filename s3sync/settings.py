@@ -8,12 +8,12 @@ CONFIG_FILE = os.path.join(os.getcwd(), '.s3sync')
 KEY_PATTERN = '{name} {storage} {size} {modified} {owner} {md5}'
 KEY_PATTERN_NAME_LEN = 60
 LIST_LIMIT = 20
-MODES = '-=<>+'
+MODES = '-=<>+r'
 COMPARE_HASH = True
 THREAD_MAX_COUNT = 40
 UPLOAD_CB_NUM = 5
 # UPLOAD_FORMAT = '{speed}\r'
-UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent}% {speed}\n'
+UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent}% {speed}'
 
 LOGGING = {
     'version': 1,

@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, print_function, unicode_literals
 
-import collections
 import argparse
+import collections
 import datetime
 import logging
 import logging.config
 import os
-import sys
 import time
 
 import boto.s3
 import boto.s3.connection
 import boto.s3.key
+import reprint
 import six
 import yaml
 
@@ -47,9 +47,6 @@ class S3SyncTool(object):
         self.debug("load config file: '%s'", path)
 
     def log(self, message, level=logging.INFO, *args, **kwargs):
-        if self.conf.get('to_clear_command_line'):
-            sys.stdout.write(' ' * utils.get_terminal_size()[1] + '\r')
-            sys.stdout.write(message.format(*args, **kwargs))
         if '%s' in message:
             logger.log(level, message, *args, **kwargs)
         else:
@@ -94,8 +91,8 @@ class S3SyncTool(object):
             help='file types (extension) for compare')
         cmd.add_argument(
             '-m', '--modes',
-            action='store', default='-<>+',
-            help='modes of comparing (by default: -=<>+)')
+            action='store', default='-<>+r',
+            help='modes of comparing (by default: -=<>+r)')
         cmd.add_argument(
             '-p', '--path',
             action='store', default='', help='path to compare')
@@ -381,6 +378,10 @@ class S3SyncTool(object):
 
     def on_update(self, namespace):
         files = self.on_diff(namespace, print_=False)
+        if not files:
+            self.error('no changes')
+            return
+
         self.info('processing...')
 
         _t = time.time()
@@ -403,6 +404,11 @@ class S3SyncTool(object):
         _size = 0
 
         pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT)
+        output_manager = reprint.output(
+            output_type="list",
+            initial_len=settings.THREAD_MAX_COUNT,
+            interval=0)
+        output = output_manager.__enter__()
 
         for name, data in six.iteritems(files):
             if data['state'] == '=':
@@ -472,9 +478,11 @@ class S3SyncTool(object):
                 self.conf,
                 name,
                 data,
+                output,
             )
 
         pool.join()
+        output_manager.__exit__(None, None, None)
 
         return processed, _size
 

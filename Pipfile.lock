@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "945242fb8e224950efdacd242a60d0c9169963f44c7bce56d355955bb23ec1d8"
+            "sha256": "5b604293e1e75f673c723515c64ad0032a66dd09f9e645653209360798b6faf7"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -16,6 +16,13 @@
         ]
     },
     "default": {
+        "backports.shutil-get-terminal-size": {
+            "hashes": [
+                "sha256:0975ba55054c15e346944b38956a4c9cbee9009391e41b86c68990effb8c1f64",
+                "sha256:713e7a8228ae80341c70586d1cc0a8caa5207346927e23d09dcbcaf18eadec80"
+            ],
+            "version": "==1.0.0"
+        },
         "boto": {
             "hashes": [
                 "sha256:147758d41ae7240dc989f0039f27da8ca0d53734be0eb869ef16e3adcfa462e8",
@@ -41,6 +48,13 @@
             "index": "pypi",
             "version": "==3.13"
         },
+        "reprint": {
+            "hashes": [
+                "sha256:78a9529e0c92cbe9d2c656acbb11a1d4f1bf111dea7b3520adc95d212659e97d"
+            ],
+            "index": "pypi",
+            "version": "==0.5.1"
+        },
         "six": {
             "hashes": [
                 "sha256:70e8a77beed4562e7f14fe23a786b54f6296e34344c23bc42f07b15018ff98e9",
@@ -64,14 +78,14 @@
                 "sha256:9d98697f088eb1b0fa451391f91afb5e3ebde16bbdb272819fd091151fda4f1a",
                 "sha256:f0b0e4eba956de51238e17573b7087e852dfe9854afd2e9c873f73fc0ca0a6dd"
             ],
-            "markers": "python_version >= '2.6'",
+            "markers": "python_version == '2.7'",
             "version": "==1.5"
         },
         "configparser": {
             "hashes": [
                 "sha256:5308b47021bc2340965c371f0f058cc6971a04502638d4244225c49d80db273a"
             ],
-            "markers": "python_version < '3.2'",
+            "markers": "python_version == '2.7'",
             "version": "==3.5.0"
         },
         "enum34": {

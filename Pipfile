@@ -11,6 +11,7 @@ pylint = "*"
 boto = "*"
 pyyaml = "*"
 six = "*"
+reprint = "*"
 
 [requires]
 python_version = "2.7"
