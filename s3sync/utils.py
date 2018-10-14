@@ -23,29 +23,29 @@ def file_hash(f_path):
 
 
 def file_path_info(path):
-    local_root = find_project_root()
+    project_root = find_project_root()
     current_root = get_cwd()
 
     if not path or path == '.':
         path = current_root
 
     if os.path.isabs(path):
-        if path == local_root:
+        if path == project_root:
             key = ''
-            path = local_root.replace('\\', '/')
+            path = project_root.replace('\\', '/')
         else:
             path = path.replace('\\', '/')
             key = re.sub(
-                '^{}/'.format(local_root.replace('\\', '/')), '', path)
+                '^{}/'.format(project_root.replace('\\', '/')), '', path)
 
-    elif local_root == current_root:
+    elif project_root == current_root:
         key = path.replace('\\', '/')
-        path = os.path.join(local_root, path).replace('\\', '/')
+        path = os.path.join(project_root, path).replace('\\', '/')
 
     else:
         path = os.path.join(current_root, path).replace('\\', '/')
         key = re.sub(
-            '^{}/'.format(local_root.replace('\\', '/')), '', path)
+            '^{}/'.format(project_root.replace('\\', '/')), '', path)
 
     try:
         key = key.decode('utf8')

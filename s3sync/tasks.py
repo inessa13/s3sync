@@ -26,9 +26,9 @@ class Worker(threading.Thread):
 
     def run(self):
         while True:
-            func, args, kwargs = self.task_queue.get()
+            func, args = self.task_queue.get()
             try:
-                result = func(*args, worker=self, **kwargs)
+                result = func(*args, worker=self)
                 self.result_queue.put(result)
             finally:
                 self.task_queue.task_done()
@@ -43,8 +43,9 @@ class ThreadPool(object):
             w = Worker(index, self.task_queue, self.result_queue)
             w.start()
 
-    def add_task(self, func, *args, **kargs):
-        self.task_queue.put((func, args, kargs))
+    def add_task(self, task, bucket, speed_queue, conf, name, data, output):
+        args = bucket, speed_queue, conf, name, data, output
+        self.task_queue.put((task, args))
 
     def join(self):
         self.task_queue.join()
@@ -93,8 +94,8 @@ class Task(object):
             print(line)
 
 
-def _upload(key, local_root, name, callback, speed_queue, local_size, replace=False):
-    local_file_path = os.path.join(local_root, name)
+def _upload(key, callback, speed_queue, local_size, local_path, replace=False):
+    local_file_path = utils.file_path(local_path)
 
     with open(local_file_path, 'rb') as local_file:
         time_start = time.time()
@@ -118,11 +119,10 @@ class Upload(Task):
     def handler(self):
         _upload(
             boto.s3.key.Key(bucket=self.bucket, name=self.name),
-            self.conf['local_root'],
-            self.name,
             self.progress,
             self.speed_queue,
             self.data.get('local_size'),
+            self.data['local_path'],
         )
         self.data['comment'] = ['uploaded']
 
@@ -134,11 +134,10 @@ class ReplaceUpload(Task):
     def handler(self):
         _upload(
             self.data['key'],
-            self.conf['local_root'],
-            self.name,
             self.progress,
             self.speed_queue,
             self.data.get('local_size'),
+            self.data['local_path'],
             replace=True,
         )
         self.data['comment'] = ['uploaded(replaced)']
@@ -176,8 +175,9 @@ class Download(Task):
         return 'download'
 
     def handler(self):
+        file_path = utils.file_path(self.data['local_path'])
         self.data['key'].get_contents_to_filename(
-            os.path.join(self.conf['local_root'], self.name),
+            file_path,
             cb=self.progress,
             num_cb=20,
         )

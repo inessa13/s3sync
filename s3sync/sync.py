@@ -132,6 +132,8 @@ class S3SyncTool(object):
         cmd = subparsers.add_parser('upload', help='upload file')
         cmd.set_defaults(func=self.on_upload)
         cmd.add_argument('path', action='store', help='path to upload')
+        cmd.add_argument(
+            '-f', '--force', action='store_true', help='force upload')
 
         cmd = subparsers.add_parser('update', help='update local or remote')
         cmd.set_defaults(func=self.on_update)
@@ -218,22 +220,6 @@ class S3SyncTool(object):
             if bucket is not None:
                 return bucket
         return None
-
-    def local_root(self, stripped=False):
-        local_root = None
-
-        if self.conf.get('local_root'):
-            local_root = self.conf['local_root']
-
-            if local_root and stripped:
-                local_root = local_root.replace('\\', '/')
-                if local_root[-1] != '/':
-                    local_root += '/'
-
-        if not local_root:
-            local_root = utils.find_project_root() or os.getcwd()
-
-        return local_root
 
     def on_config(self, namespace):
         if namespace.local:
@@ -341,38 +327,37 @@ class S3SyncTool(object):
 
             if key in remote_files:
                 equal = True
-                if stat.st_size != remote_files[key]['size']:
+                remote = remote_files[key]
+                remote['local_path'] = f_path
+
+                if stat.st_size != remote['size']:
                     equal = False
-                    remote_files[key]['comment'].append('size: {0}%'.format(
-                        round(float(
-                            remote_files[key]['size']) / stat.st_size * 100, 2)
-                    ))
+                    remote['comment'].append('size: {0}%'.format(
+                        round(stat.st_size * 100 / float(remote['size']), 2)))
                 elif not namespace.skip_md5:
                     hash_ = utils.file_hash(f_path)
-                    if hash_ != remote_files[key]['md5']:
+                    if hash_ != remote['md5']:
                         equal = False
-                        remote_files[key]['comment'].append('md5: different')
+                        remote['comment'].append('md5: different')
 
                 if equal:
-                    remote_files[key].update(state='=', comment=[])
+                    remote.update(state='=', comment=[])
                 else:
-                    remote_files[key]['local_size'] = stat.st_size
+                    remote['local_size'] = stat.st_size
                     local_modified = datetime.datetime.fromtimestamp(
                         stat.st_ctime).replace(microsecond=0)
                     remote_modified = datetime.datetime.strptime(
-                        remote_files[key]['modified'],
-                        '%Y-%m-%dT%H:%M:%S.000Z')
+                        remote['modified'], '%Y-%m-%dT%H:%M:%S.000Z')
                     remote_modified += datetime.timedelta(hours=4)
 
-                    remote_files[key]['comment'].append(
-                        'modified: {0}'.format(
-                            local_modified - remote_modified))
+                    remote['comment'].append('modified: {0}'.format(
+                        local_modified - remote_modified))
                     if local_modified > remote_modified:
-                        remote_files[key]['state'] = '>'
+                        remote['state'] = '>'
                     else:
-                        remote_files[key]['state'] = '<'
+                        remote['state'] = '<'
 
-                if remote_files[key]['state'] not in namespace.modes:
+                if remote['state'] not in namespace.modes:
                     del remote_files[key]
 
             else:
@@ -382,6 +367,7 @@ class S3SyncTool(object):
 
                 remote_files[key] = dict(
                     local_size=stat.st_size,
+                    local_path=f_path,
                     modified=stat.st_mtime,
                     md5=utils.file_hash(f_path),
                     state='+',
@@ -460,7 +446,7 @@ class S3SyncTool(object):
         if not bucket:
             raise UserError('Missing bucket')
 
-        local_path = os.path.join(self.conf['local_root'], namespace.path)
+        local_path = utils.file_path(namespace.path)
         if not os.path.exists(local_path):
             raise UserError('Local path does not exists')
 
@@ -468,13 +454,20 @@ class S3SyncTool(object):
         ls = bucket.list(delimiter='/', prefix=key)
         ls = list(ls)
 
-        if ls:
-            raise UserError('Remote path exists')
+        if ls and namespace.force:
+            task = tasks.ReplaceUpload()
+        elif not ls:
+            task = tasks.Upload()
+        else:
+            raise UserError('Remote path exists. Use force flag.')
 
         stat = os.stat(local_path)
-        data = {'local_size': stat.st_size}
+        data = {
+            'key': boto.s3.key.Key(bucket=bucket, name=key),
+            'local_size': stat.st_size,
+            'local_path': local_path,
+        }
 
-        task = tasks.Upload()
         task(bucket, None, self.conf, key, data, None)
         if data['comment']:
             print(data['comment'][0])
@@ -552,27 +545,30 @@ class S3SyncTool(object):
                         continue
                     action = act
 
+            elif data['state'] == 'r':
+                if self._check(
+                        name, data, namespace.quiet,
+                        namespace.confirm_rename_remote):
+                    action = tasks.RenameRemote()
+                else:
+                    continue
+
             elif data['state'] == '>' or namespace.force_upload:
                 data['state'] = '>'
                 if self._check(
                         name, data, namespace.quiet,
                         namespace.confirm_replace_upload):
                     action = tasks.ReplaceUpload()
-                continue
+                else:
+                    continue
 
             elif data['state'] == '<':
                 if self._check(
                         name, data, namespace.quiet,
                         namespace.confirm_replace_download):
                     action = tasks.Download()
-                continue
-
-            elif data['state'] == 'r':
-                if self._check(
-                        name, data, namespace.quiet,
-                        namespace.confirm_rename_remote):
-                    action = tasks.RenameRemote()
-                continue
+                else:
+                    continue
 
             _size += data.get('local_size', 0)
 
@@ -643,7 +639,8 @@ class S3SyncTool(object):
                 'size': str(key.size).ljust(10, ' '.encode('ascii')),
                 'owner': key.owner.display_name,
                 'modified': key.last_modified,
-                'storage': settings.STORAGE_ALIASES.get(key.storage_class, '?'),
+                'storage': settings.STORAGE_ALIASES.get(
+                    key.storage_class, '?'),
                 'md5': key.etag[1:-1],
             }
         else:
