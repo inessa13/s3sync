@@ -33,18 +33,20 @@ class S3SyncTool(object):
     def __init__(self):
         self.conn = None
         self.confirm_permanent = {}
+
+        # load configs
         self.conf = {k.lower(): v for k, v in settings.__dict__.items()}
+        self.load_config(settings.CONFIG_GLOBAL, update=True)
+        self.load_config(settings.CONFIG_LOCAL, update=True)
 
-    def _load_config_file(self, path):
-        if not os.path.exists(path):
-            return
-
-        with open(path, 'r') as file_:
-            _loaded = yaml.load(file_)
-            if not _loaded:
-                raise UserError('Config file is empty')
-        self.conf.update(_loaded)
-        self.debug("load config file: '%s'", path)
+    def load_config(self, path, update=False):
+        if os.path.exists(path):
+            with open(path, 'r') as config_file:
+                loaded = yaml.load(config_file)
+                if update:
+                    self.conf.update(loaded)
+                    return None
+                return loaded
 
     def log(self, message, level=logging.INFO, *args, **kwargs):
         if '%s' in message:
@@ -65,8 +67,22 @@ class S3SyncTool(object):
     def run_cli(self):
         parser = argparse.ArgumentParser()
 
-        # TODO: init, rm
         subparsers = parser.add_subparsers()
+
+        cmd = subparsers.add_parser('config', help='show/edit config')
+        cmd.set_defaults(func=self.on_config)
+        cmd.add_argument(
+            '--local',
+            action='store_true',
+            help='show/edit local config; by default global')
+        cmd.add_argument(
+            '--set', action='store', help='set config data')
+
+        cmd = subparsers.add_parser('init', help='init project')
+        cmd.set_defaults(func=self.on_init)
+        cmd.add_argument(
+            'bucket', action='store', help='bucket for sync')
+
         cmd = subparsers.add_parser('buckets', help='list buckets')
         cmd.set_defaults(func=self.on_list_buckets)
 
@@ -102,6 +118,14 @@ class S3SyncTool(object):
             '--skip-md5',
             action='store_true',
             help='skip file content comparing')
+
+        cmd = subparsers.add_parser('rm', help='remove remote file')
+        cmd.set_defaults(func=self.on_remove)
+        cmd.add_argument('path', action='store', help='path to remove')
+
+        cmd = subparsers.add_parser('upload', help='upload file')
+        cmd.set_defaults(func=self.on_upload)
+        cmd.add_argument('path', action='store', help='path to upload')
 
         cmd = subparsers.add_parser('update', help='update local or remote')
         cmd.set_defaults(func=self.on_update)
@@ -159,11 +183,8 @@ class S3SyncTool(object):
         parser.print_help()
 
     def handler(self, namespace):
-        self._load_config_file(os.path.join(os.getcwd(), '.s3sync'))
-
-        if not self.conf.get('access_key') or not self.conf.get(
-                'secret_key'):
-            return self.error('missing access or secret key')
+        if not self.conf.get('access_key') or not self.conf.get('secret_key'):
+            raise UserError('Missing access or secret key')
 
         self.debug('connecting s3...')
         # os.environ['S3_USE_SIGV4'] = 'True'
@@ -173,6 +194,10 @@ class S3SyncTool(object):
         return namespace.func(namespace)
 
     def bucket(self, name=None):
+        name = name or self.conf.get('bucket')
+        if not name:
+            return None
+
         for region in boto.s3.regions():
             if (self.conf.get('allowed_regions')
                     and region.name not in self.conf['allowed_regions']):
@@ -183,7 +208,7 @@ class S3SyncTool(object):
                 host=region.endpoint)
             if not conn:
                 continue
-            bucket = conn.lookup(name or self.conf['bucket'], validate=True)
+            bucket = conn.lookup(name, validate=True)
             if bucket is not None:
                 return bucket
         return None
@@ -204,6 +229,40 @@ class S3SyncTool(object):
 
         return local_root
 
+    def on_config(self, namespace):
+        if namespace.local:
+            config_path = settings.CONFIG_LOCAL
+        else:
+            config_path = settings.CONFIG_GLOBAL
+
+        config = self.load_config(config_path) or {}
+
+        if namespace.set:
+            if '=' not in namespace.set:
+                raise UserError('Invalid config option')
+            key, value = namespace.set.split('=', 1)
+            config[key.encode('utf8')] = value.encode('utf8')
+
+        elif config:
+            print(config)
+
+        else:
+            print('Config is empty')
+
+        if config:
+            if not namespace.local and not os.path.exists(
+                    settings.CONFIG_DIR):
+                os.makedirs(settings.CONFIG_DIR)
+
+            with open(config_path, 'w') as config_file:
+                yaml.dump(config, config_file, default_flow_style=False)
+
+    @classmethod
+    def on_init(cls, namespace):
+        config = {'bucket'.encode('utf8'): namespace.bucket.encode('utf8')}
+        with open(settings.CONFIG_LOCAL, 'w') as config_file:
+            yaml.dump(config, config_file, default_flow_style=False)
+
     def on_list_buckets(self, namespace):
         self.info('listing buckets:')
         for bucket in self.conn.get_all_buckets():
@@ -217,7 +276,7 @@ class S3SyncTool(object):
             recursive=namespace.recursive)
 
         if bucket is False:
-            return self.error('missing bucket')
+            raise UserError('Missing bucket')
 
         for index, key in enumerate(bucket):
             if index >= namespace.limit > 0:
@@ -375,6 +434,61 @@ class S3SyncTool(object):
             self.info('{0} differences', len(remote_files.keys()))
         else:
             return remote_files
+
+    def on_remove(self, namespace):
+        bucket = self.bucket()
+        if not bucket:
+            raise UserError('Missing bucket')
+
+        path = namespace.path.replace('\\', '/')
+
+        if path[-1] == '/':
+            raise UserError('Path is dir')
+
+        ls = bucket.list(delimiter='/', prefix=path)
+        ls = list(ls)
+
+        if not ls:
+            raise UserError('File not found')
+
+        if len(ls) > 1:
+            raise UserError('Multiple files found')
+
+        remote_file = ls[0]
+
+        if not isinstance(remote_file, boto.s3.key.Key):
+            raise UserError('Try to remove dir')
+
+        remote_file.delete()
+        print('File successful deleted')
+
+    def on_upload(self, namespace):
+        bucket = self.bucket()
+        if not bucket:
+            raise UserError('Missing bucket')
+
+        local_path = os.path.join(self.conf['local_root'], namespace.path)
+        if not os.path.exists(local_path):
+            raise UserError('Local path does not exists')
+
+        local_root_s = self.local_root(stripped=True)
+        key = utils.file_key(local_root_s, namespace.path)
+
+        ls = bucket.list(delimiter='/', prefix=key)
+        ls = list(ls)
+
+        if ls:
+            raise UserError('Remote path exists')
+
+        stat = os.stat(local_path)
+        data = {'local_size': stat.st_size}
+
+        task = tasks.Upload()
+        task(bucket, None, self.conf, key, data, None)
+        if data['comment']:
+            print(data['comment'][0])
+        else:
+            print('File successful uploaded')
 
     def on_update(self, namespace):
         files = self.on_diff(namespace, print_=False)

@@ -81,12 +81,16 @@ class Task(object):
         else:
             speed = 'n\\a'
 
-        self.output[self.worker.index] = settings.UPLOAD_FORMAT.format(
+        line = settings.UPLOAD_FORMAT.format(
             progress='=' * progress_len,
             left=' ' * (len_full - progress_len),
             progress_percent=progress,
             speed=speed,
         )
+        if self.output and self.worker:
+            self.output[self.worker.index] = line
+        else:
+            print(line)
 
 
 def _upload(key, local_root, name, callback, speed_queue, local_size, replace=False):
@@ -177,3 +181,11 @@ class Download(Task):
             cb=self.progress,
             num_cb=20,
         )
+
+
+class DeleteLocal(Task):
+    def __str__(self):
+        return 'delete_local'
+
+    def handler(self):
+        raise NotImplementedError()

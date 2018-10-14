@@ -4,7 +4,10 @@ from __future__ import unicode_literals
 import os
 
 BIN_PATH = os.path.dirname(__file__)
-CONFIG_FILE = os.path.join(os.getcwd(), '.s3sync')
+
+CONFIG_DIR = os.path.expanduser('~/.config/s3sync/')
+CONFIG_GLOBAL = os.path.join(CONFIG_DIR, 'config.yml')
+CONFIG_LOCAL = os.path.join(os.getcwd(), '.s3sync')
 KEY_PATTERN = '{name} {storage} {size} {modified} {owner} {md5}'
 KEY_PATTERN_NAME_LEN = 60
 LIST_LIMIT = 20
@@ -12,7 +15,6 @@ MODES = '-=<>+r'
 COMPARE_HASH = True
 THREAD_MAX_COUNT = 40
 UPLOAD_CB_NUM = 5
-# UPLOAD_FORMAT = '{speed}\r'
 UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent}% {speed}'
 
 LOGGING = {
