@@ -7,7 +7,7 @@ BIN_PATH = os.path.dirname(__file__)
 
 CONFIG_DIR = os.path.expanduser('~/.config/s3sync/')
 CONFIG_GLOBAL = os.path.join(CONFIG_DIR, 'config.yml')
-CONFIG_LOCAL = os.path.join(os.getcwd(), '.s3sync')
+CONFIG_LOCAL_NAME = '.s3sync'
 KEY_PATTERN = '{name} {storage} {size} {modified} {owner} {md5}'
 KEY_PATTERN_NAME_LEN = 60
 LIST_LIMIT = 20

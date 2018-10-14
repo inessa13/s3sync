@@ -4,6 +4,10 @@ import re
 import struct
 import termios
 
+import six
+
+from . import settings
+
 
 def file_hash(f_path):
     from hashlib import md5
@@ -18,11 +22,30 @@ def file_hash(f_path):
     return hash_.hexdigest()
 
 
-def file_key(local_root_s, file_path, file_types=None):
-    if file_types and not check_file_type(file_path, file_types):
-        return None
+def file_path_info(path):
+    local_root = find_project_root()
+    current_root = get_cwd()
 
-    key = file_path
+    if not path or path == '.':
+        path = current_root
+
+    if os.path.isabs(path):
+        if path == local_root:
+            key = ''
+            path = local_root.replace('\\', '/')
+        else:
+            path = path.replace('\\', '/')
+            key = re.sub(
+                '^{}/'.format(local_root.replace('\\', '/')), '', path)
+
+    elif local_root == current_root:
+        key = path.replace('\\', '/')
+        path = os.path.join(local_root, path).replace('\\', '/')
+
+    else:
+        path = os.path.join(current_root, path).replace('\\', '/')
+        key = re.sub(
+            '^{}/'.format(local_root.replace('\\', '/')), '', path)
 
     try:
         key = key.decode('utf8')
@@ -32,30 +55,50 @@ def file_key(local_root_s, file_path, file_types=None):
         except UnicodeEncodeError:
             key = key
 
-    key = key.replace('\\', '/')
-    key = re.sub('^({})'.format(local_root_s), '', key)
-    return key
+    # TODO: fix for windows
+    path = '/' + os.path.join(*path.split('/'))
+    return path, key
 
 
-def list_remote_dir(bucket, src_path, local_root_s, recursive=False):
-    if not bucket:
-        return False
+def file_key(path):
+    return file_path_info(path)[1]
 
-    if local_root_s:
-        compare_path = file_key(local_root_s, src_path)
+
+def file_path(path):
+    return file_path_info(path)[0]
+
+
+def iter_local_path(path, recursive=False):
+    path = file_path(path)
+    if os.path.isdir(path):
+        if recursive:
+            for dir_path, __, file_names in os.walk(path):
+                for file_ in file_names:
+                    yield os.path.join(dir_path, file_)
+        else:
+            for file_ in os.listdir(path):
+                yield os.path.join(path, file_)
+
+    elif os.path.isfile(path):
+        yield path
+
     else:
-        compare_path = src_path
+        raise UserWarning('Invalid path {}'.format(path))
 
-    if compare_path and os.path.isdir(src_path):
-        if compare_path[-1] != '/':
-            compare_path += '/'
+
+def iter_remote_path(bucket, path, recursive=False):
+    assert bucket
+
+    local_path, key = file_path_info(path)
+    if key and os.path.isdir(local_path) and key[-1] != '/':
+        key += '/'
 
     params = dict()
     if not recursive:
         params['delimiter'] = '/'
 
-    if compare_path:
-        params['prefix'] = compare_path.replace('\\', '/')
+    if key:
+        params['prefix'] = key.replace('\\', '/')
 
     return bucket.list(**params)
 
@@ -92,9 +135,10 @@ def humanize_size(value, multiplier=1024, label='Bps'):
 
 
 def check_file_type(filename, types):
-    filename = filename.lower()
     if not types:
         return True
+
+    filename = filename.lower()
 
     file_types = types.lower().split(',')
     if file_types[0][0] == '^':
@@ -107,3 +151,44 @@ def check_file_type(filename, types):
     if not exclude and filename.split('.')[-1] not in file_types:
         return False
     return True
+
+
+def memoize(func):
+    memo = {}
+
+    def wrapper(*args, **kwargs):
+        memo_key = ''
+
+        if args:
+            memo_key += ','.join(map(str, args))
+        if kwargs:
+            memo_key += ','.join(
+                '{}:{}'.format(k, v) for k, v in six.iteritems(kwargs))
+
+        if memo_key not in memo:
+            memo[memo_key] = func(*args, **kwargs)
+
+        return memo[memo_key]
+
+    return wrapper
+
+
+@memoize
+def find_project_root():
+    root = get_cwd()
+    while root:
+        path = os.path.join(root, settings.CONFIG_LOCAL_NAME)
+        if os.path.exists(path):
+            return root
+
+        # TODO: fix for windows
+        if root == '/':
+            return None
+
+        root = os.path.dirname(root)
+    return None
+
+
+@memoize
+def get_cwd():
+    return os.getcwd()

@@ -37,10 +37,16 @@ class S3SyncTool(object):
         # load configs
         self.conf = {k.lower(): v for k, v in settings.__dict__.items()}
         self.load_config(settings.CONFIG_GLOBAL, update=True)
-        self.load_config(settings.CONFIG_LOCAL, update=True)
+
+        project_root = utils.find_project_root()
+        if project_root:
+            self.conf['project_root'] = project_root
+            self.conf['local_config'] = project_config = os.path.join(
+                project_root, settings.CONFIG_LOCAL_NAME)
+            self.load_config(project_config, update=True)
 
     def load_config(self, path, update=False):
-        if os.path.exists(path):
+        if path and os.path.exists(path):
             with open(path, 'r') as config_file:
                 loaded = yaml.load(config_file)
                 if update:
@@ -225,13 +231,13 @@ class S3SyncTool(object):
                     local_root += '/'
 
         if not local_root:
-            local_root = os.getcwd()
+            local_root = utils.find_project_root() or os.getcwd()
 
         return local_root
 
     def on_config(self, namespace):
         if namespace.local:
-            config_path = settings.CONFIG_LOCAL
+            config_path = self.conf.get('local_config')
         else:
             config_path = settings.CONFIG_GLOBAL
 
@@ -259,8 +265,9 @@ class S3SyncTool(object):
 
     @classmethod
     def on_init(cls, namespace):
-        config = {'bucket'.encode('utf8'): namespace.bucket.encode('utf8')}
-        with open(settings.CONFIG_LOCAL, 'w') as config_file:
+        config_path = os.path.join(os.getcwd(), settings.CONFIG_LOCAL_NAME)
+        with open(config_path, 'w') as config_file:
+            config = {'bucket'.encode('utf8'): namespace.bucket.encode('utf8')}
             yaml.dump(config, config_file, default_flow_style=False)
 
     def on_list_buckets(self, namespace):
@@ -269,10 +276,9 @@ class S3SyncTool(object):
             self.info(bucket.name)
 
     def on_list(self, namespace):
-        bucket = utils.list_remote_dir(
+        bucket = utils.iter_remote_path(
             self.bucket(namespace.bucket),
             namespace.path,
-            None,
             recursive=namespace.recursive)
 
         if bucket is False:
@@ -285,32 +291,17 @@ class S3SyncTool(object):
             self._print_key(key)
 
     def on_diff(self, namespace, print_=True):
-        local_root_s = self.local_root(stripped=True)
-
-        src_path = os.path.join(self.local_root(), namespace.path)
         src_files = []
-        if os.path.isdir(src_path):
-            if namespace.recursive:
-                for dir_path, __, file_names in os.walk(src_path):
-                    for file_ in file_names:
-                        file_path = os.path.join(dir_path, file_)
-                        key = utils.file_key(
-                            local_root_s, file_path, namespace.file_types)
-                        if key and os.path.isfile(file_path):
-                            src_files.append((key, file_path))
-            else:
-                for file_ in os.listdir(src_path):
-                    file_path = os.path.join(src_path, file_)
-                    key = utils.file_key(
-                        local_root_s, file_path, namespace.file_types)
-                    if key and os.path.isfile(file_path):
-                        src_files.append((key, file_path))
+        for file_path in utils.iter_local_path(
+                namespace.path, namespace.recursive):
+            if not os.path.isfile(file_path):
+                continue
 
-        elif os.path.isfile(src_path):
-            key = utils.file_key(
-                local_root_s, src_path, namespace.file_types)
-            if key:
-                src_files.append((key, src_path))
+            if not utils.check_file_type(file_path, namespace.file_types):
+                continue
+
+            key = utils.file_key(file_path)
+            src_files.append((key, file_path))
 
         self.info('{0} local objects', len(src_files))
 
@@ -319,8 +310,9 @@ class S3SyncTool(object):
             raise UserError('missing bucket')
 
         remote_files = dict()
-        ls_remote = utils.list_remote_dir(
-            bucket, src_path, local_root_s, recursive=namespace.recursive)
+
+        ls_remote = utils.iter_remote_path(
+            bucket, namespace.path, recursive=namespace.recursive)
 
         for file_ in ls_remote:
             if not isinstance(file_, boto.s3.key.Key) or file_.name[-1] == '/':
@@ -418,6 +410,7 @@ class S3SyncTool(object):
                         'new: {0}'.format(key))
                     to_del.append(key)
                     break
+
             for key in to_del:
                 del remote_files[key]
 
@@ -471,9 +464,7 @@ class S3SyncTool(object):
         if not os.path.exists(local_path):
             raise UserError('Local path does not exists')
 
-        local_root_s = self.local_root(stripped=True)
-        key = utils.file_key(local_root_s, namespace.path)
-
+        key = utils.file_key(namespace.path)
         ls = bucket.list(delimiter='/', prefix=key)
         ls = list(ls)
 

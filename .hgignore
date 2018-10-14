@@ -1,3 +1,4 @@
 ^\.idea/
 .*\.py[cod]
 \.egg-info/
+\.pytest_cache/

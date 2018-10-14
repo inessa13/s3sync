@@ -6,6 +6,8 @@ name = "pypi"
 [dev-packages]
 pylint = "*"
 "flake8" = "*"
+pytest = "*"
+mock = "*"
 
 [packages]
 boto = "*"
