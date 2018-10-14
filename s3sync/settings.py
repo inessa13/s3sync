@@ -50,6 +50,7 @@ LOGGING = {
         },
     }
 }
+
 STORAGE_ALIASES = {
     'GLACIER': 'G',
     'STANDARD': 'S',

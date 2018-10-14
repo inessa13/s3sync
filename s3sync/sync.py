@@ -46,15 +46,17 @@ class S3SyncTool(object):
             self.load_config(project_config, update=True)
 
     def load_config(self, path, update=False):
-        if path and os.path.exists(path):
-            with open(path, 'r') as config_file:
-                loaded = yaml.load(config_file)
-                if update:
-                    self.conf.update(loaded)
-                    return None
-                return loaded
+        if not path or not os.path.exists(path):
+            return None
 
-    def log(self, message, level=logging.INFO, *args, **kwargs):
+        with open(path, 'r') as config_file:
+            loaded = yaml.load(config_file)
+            if update:
+                self.conf.update(loaded)
+            return loaded
+
+    @classmethod
+    def log(cls, message, level, *args, **kwargs):
         if '%s' in message:
             logger.log(level, message, *args, **kwargs)
         else:
@@ -186,7 +188,7 @@ class S3SyncTool(object):
         namespace = parser.parse_args()
 
         if getattr(namespace, 'func', None):
-            return self.handler(namespace)
+            self.handler(namespace)
 
         parser.print_help()
 
@@ -256,7 +258,7 @@ class S3SyncTool(object):
             config = {'bucket'.encode('utf8'): namespace.bucket.encode('utf8')}
             yaml.dump(config, config_file, default_flow_style=False)
 
-    def on_list_buckets(self, namespace):
+    def on_list_buckets(self, namespace):  # pylint: disable=unused-argument
         self.info('listing buckets:')
         for bucket in self.conn.get_all_buckets():
             self.info(bucket.name)
@@ -319,7 +321,7 @@ class S3SyncTool(object):
         self.info('{0} remote objects', len(remote_files.keys()))
 
         if not src_files and not remote_files:
-            return
+            return None
 
         self.info('comparing...')
         for key, f_path in src_files:
@@ -411,8 +413,8 @@ class S3SyncTool(object):
             for key in keys:
                 self._print_diff_line(key, remote_files[key])
             self.info('{0} differences', len(remote_files.keys()))
-        else:
-            return remote_files
+
+        return remote_files
 
     def on_remove(self, namespace):
         bucket = self.bucket()
@@ -424,16 +426,16 @@ class S3SyncTool(object):
         if path[-1] == '/':
             raise UserError('Path is dir')
 
-        ls = bucket.list(delimiter='/', prefix=path)
-        ls = list(ls)
+        files = bucket.list(delimiter='/', prefix=path)
+        files = list(files)
 
-        if not ls:
+        if not files:
             raise UserError('File not found')
 
-        if len(ls) > 1:
+        if len(files) > 1:
             raise UserError('Multiple files found')
 
-        remote_file = ls[0]
+        remote_file = files[0]
 
         if not isinstance(remote_file, boto.s3.key.Key):
             raise UserError('Try to remove dir')
@@ -451,12 +453,12 @@ class S3SyncTool(object):
             raise UserError('Local path does not exists')
 
         key = utils.file_key(namespace.path)
-        ls = bucket.list(delimiter='/', prefix=key)
-        ls = list(ls)
+        files = bucket.list(delimiter='/', prefix=key)
+        files = list(files)
 
-        if ls and namespace.force:
+        if files and namespace.force:
             task = tasks.ReplaceUpload()
-        elif not ls:
+        elif not files:
             task = tasks.Upload()
         else:
             raise UserError('Remote path exists. Use force flag.')

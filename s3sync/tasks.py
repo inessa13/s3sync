@@ -2,7 +2,6 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import logging.config
-import os
 import threading
 import time
 
@@ -40,8 +39,8 @@ class ThreadPool(object):
 
         self.task_queue = six.moves.queue.Queue(num_threads)
         for index in six.moves.range(num_threads):
-            w = Worker(index, self.task_queue, self.result_queue)
-            w.start()
+            worker = Worker(index, self.task_queue, self.result_queue)
+            worker.start()
 
     def add_task(self, task, bucket, speed_queue, conf, name, data, output):
         args = bucket, speed_queue, conf, name, data, output
@@ -52,6 +51,15 @@ class ThreadPool(object):
 
 
 class Task(object):
+    def __init__(self):
+        self.bucket = None
+        self.speed_queue = None
+        self.conf = None
+        self.name = None
+        self.data = None
+        self.output = None
+        self.worker = None
+
     def handler(self):
         raise NotImplementedError()
 
