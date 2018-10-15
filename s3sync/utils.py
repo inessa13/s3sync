@@ -114,6 +114,9 @@ def humanize_size(value, multiplier=1024, label='Bps'):
     elif value > multiplier:
         value /= multiplier
         label = 'K' + label
+    else:
+        label = ' ' + label
+
     return '{:7.2f} {}'.format(value, label)
 
 

@@ -684,12 +684,8 @@ class S3SyncTool(object):
         self.info(pattern.format(**params))
 
     def _print_diff_line(self, name, data):
-        self.info(
-            '{0} {1} {2}',
-            data['state'],
-            name,
-            ', '.join(data.get('comment', []))
-        )
+        print('{} {} {}'.format(
+            data['state'], name, ', '.join(data.get('comment', []))).encode('utf8'))
 
 
 def main():

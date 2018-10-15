@@ -23,6 +23,7 @@ class Worker(threading.Thread):
         self.task_queue = task_queue
         self.result_queue = result_queue
         self.daemon = True
+        self.speed_list = []
 
     def run(self):
         while True:
@@ -33,6 +34,12 @@ class Worker(threading.Thread):
                     self.result_queue.put(result)
             finally:
                 self.task_queue.task_done()
+
+    def speed(self, current):
+        if not self.speed_list:
+            return current
+        return (sum(
+            self.speed_list) + current) / float(len(self.speed_list) + 1)
 
 
 class ThreadPool(object):
@@ -54,6 +61,8 @@ class ThreadPool(object):
 
 
 class Task(object):
+    done = 'finished'
+
     def __init__(self):
         self.bucket = None
         self.speed_queue = None
@@ -77,17 +86,28 @@ class Task(object):
         self.output = output
         self.worker = worker
         self._t = time.time()
+
         self.handler()
+
+        size = self.size()
+        if size:
+            self.worker.speed_list.append(size / (time.time() - self._t))
+
+        self.output_finish()
+
+    def size(self):
+        return 0
 
     def progress(self, uploaded, full):
         len_full = 40
         progress = round(float(uploaded) / full, 2) * 100
         progress_len = int(progress) * len_full / 100
 
-        local_size = self.data.get('local_size')
-        if local_size:
-            uploaded = local_size * float(uploaded) / full
-            speed = utils.humanize_size(uploaded / (time.time() - self._t))
+        size = self.size()
+        if size:
+            uploaded = size * float(uploaded) / full
+            speed_value = self.worker.speed(uploaded / (time.time() - self._t))
+            speed = utils.humanize_size(speed_value)
         else:
             speed = 'n\\a'
 
@@ -103,6 +123,15 @@ class Task(object):
             self.output[self.worker.index] = line
         else:
             print(line)
+
+    def output_finish(self):
+        with self.output.lock:
+            prefix = settings.THREAD_MAX_COUNT
+            total = prefix + settings.ENDED_OUTPUT_MAX_COUNT
+            if len(self.output) >= total:
+                self.output[prefix:total] = self.output[prefix + 1:total]
+
+        self.output.append('{} {}'.format(self.done, self.name))
 
 
 def _upload(key, callback, speed_queue, local_size, local_path, replace=False):
@@ -124,8 +153,13 @@ def _upload(key, callback, speed_queue, local_size, local_path, replace=False):
 
 
 class Upload(Task):
+    done = 'uploaded'
+
     def __str__(self):
         return 'upload'
+
+    def size(self):
+        return self.data.get('local_size') or 0
 
     def handler(self):
         _upload(
@@ -136,12 +170,16 @@ class Upload(Task):
             self.data['local_path'],
         )
         self.data['comment'] = ['uploaded']
-        self.output.append('uploaded {}'.format(self.name))
 
 
 class ReplaceUpload(Task):
+    done = 'uploaded (replace)'
+
     def __str__(self):
         return 'upload_replace'
+
+    def size(self):
+        return self.data.get('local_size') or 0
 
     def handler(self):
         _upload(
@@ -153,10 +191,11 @@ class ReplaceUpload(Task):
             replace=True,
         )
         self.data['comment'] = ['uploaded(replaced)']
-        self.output.append('uploaded (replaced) {}'.format(self.name))
 
 
 class DeleteRemote(Task):
+    done = 'deleted (remote)'
+
     def __str__(self):
         return 'delete_remote'
 
@@ -166,6 +205,8 @@ class DeleteRemote(Task):
 
 
 class RenameRemote(Task):
+    done = 'renamed (remote)'
+
     def __str__(self):
         return 'rename_remote'
 
@@ -184,8 +225,13 @@ class RenameRemote(Task):
 
 
 class Download(Task):
+    done = 'downloaded'
+
     def __str__(self):
         return 'download'
+
+    def size(self):
+        return self.data.get('size') or 0
 
     def handler(self):
         file_path = utils.file_path(self.data['local_path'])
@@ -201,15 +247,10 @@ class Download(Task):
             num_cb=20,
         )
 
-        line = 'downloaded {}'.format(self.name)
-        prefix = settings.THREAD_MAX_COUNT
-        total = prefix + settings.ENDED_OUTPUT_MAX_COUNT
-        if len(self.output) >= total:
-            self.output[prefix:total] = self.output[prefix + 1:total]
-        self.output.append(line)
-
 
 class DeleteLocal(Task):
+    done = 'deleted (local)'
+
     def __str__(self):
         return 'delete_local'
 
