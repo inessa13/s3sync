@@ -11,11 +11,10 @@ CONFIG_LOCAL_NAME = '.s3sync'
 KEY_PATTERN = '{name} {storage} {size} {modified} {owner} {md5}'
 KEY_PATTERN_NAME_LEN = 60
 LIST_LIMIT = 20
-MODES = '-=<>+r'
 COMPARE_HASH = True
 THREAD_MAX_COUNT = 15
 UPLOAD_CB_NUM = 20
-UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent}% {speed}'
+UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent:3.0f}% {speed}'
 
 LOGGING = {
     'version': 1,

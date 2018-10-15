@@ -16,17 +16,9 @@ import reprint
 import six
 import yaml
 
-from . import settings, tasks, utils
+from . import settings, tasks, utils, errors
 
 logger = logging.getLogger(__name__)
-
-
-class BaseError(Exception):
-    pass
-
-
-class UserError(BaseError):
-    pass
 
 
 class S3SyncTool(object):
@@ -114,6 +106,9 @@ class S3SyncTool(object):
             action='store',
             help='file types (extension) for compare')
         cmd.add_argument(
+            '-i', '--ignore-case',
+            action='store_true', help='ignore file path case')
+        cmd.add_argument(
             '-m', '--modes',
             action='store', default='-<>+r',
             help='modes of comparing (by default: -=<>+r)')
@@ -123,9 +118,7 @@ class S3SyncTool(object):
         cmd.add_argument(
             '-r', '--recursive', action='store_true', help='list recursive')
         cmd.add_argument(
-            '--skip-md5',
-            action='store_true',
-            help='skip file content comparing')
+            '--md5', action='store_true', help='compare file content')
 
         cmd = subparsers.add_parser('rm', help='remove remote file')
         cmd.set_defaults(func=self.on_remove)
@@ -144,6 +137,9 @@ class S3SyncTool(object):
             action='store',
             help='file types (extension) for compare')
         cmd.add_argument(
+            '-i', '--ignore-case',
+            action='store_true', help='ignore file path case')
+        cmd.add_argument(
             '-m', '--modes',
             action='store', default='-<>+',
             help='modes of comparing (values: -=<>+)')
@@ -156,9 +152,7 @@ class S3SyncTool(object):
         cmd.add_argument(
             '-r', '--recursive', action='store_true', help='list recursive')
         cmd.add_argument(
-            '--skip-md5',
-            action='store_true',
-            help='skip file content comparing')
+            '--md5', action='store_true', help='compare file content')
         cmd.add_argument(
             '--confirm-upload',
             action='store_true', help='confirm upload action')
@@ -195,7 +189,7 @@ class S3SyncTool(object):
 
     def handler(self, namespace):
         if not self.conf.get('access_key') or not self.conf.get('secret_key'):
-            raise UserError('Missing access or secret key')
+            raise errors.UserError('Missing access or secret key')
 
         self.debug('connecting s3...')
         # os.environ['S3_USE_SIGV4'] = 'True'
@@ -234,7 +228,7 @@ class S3SyncTool(object):
 
         if namespace.set:
             if '=' not in namespace.set:
-                raise UserError('Invalid config option')
+                raise errors.UserError('Invalid config option')
             key, value = namespace.set.split('=', 1)
             config[key.encode('utf8')] = value.encode('utf8')
 
@@ -271,7 +265,7 @@ class S3SyncTool(object):
             recursive=namespace.recursive)
 
         if bucket is False:
-            raise UserError('Missing bucket')
+            raise errors.UserError('Missing bucket')
 
         for index, key in enumerate(bucket):
             if index >= namespace.limit > 0:
@@ -290,13 +284,15 @@ class S3SyncTool(object):
                 continue
 
             key = utils.file_key(file_path)
+            if namespace.ignore_case:
+                key = key.lower()
             src_files.append((key, file_path))
 
         self.info('{0} local objects', len(src_files))
 
         bucket = self.bucket()
         if not bucket:
-            raise UserError('missing bucket')
+            raise errors.UserError('missing bucket')
 
         remote_files = dict()
 
@@ -309,7 +305,11 @@ class S3SyncTool(object):
             if not utils.check_file_type(file_.name, namespace.file_types):
                 continue
 
-            remote_files[file_.name] = dict(
+            key = file_.name
+            if namespace.ignore_case:
+                key = key.lower()
+
+            remote_files[key] = dict(
                 key=file_,
                 name=file_.name,
                 size=file_.size,
@@ -317,6 +317,7 @@ class S3SyncTool(object):
                 md5=file_.etag[1:-1],
                 state='-',
                 comment=[],
+                local_path=utils.file_path(file_.name),
             )
 
         self.info('{0} remote objects', len(remote_files.keys()))
@@ -337,9 +338,9 @@ class S3SyncTool(object):
                     equal = False
                     remote['comment'].append('size: {0}%'.format(
                         round(stat.st_size * 100 / float(remote['size']), 2)))
-                elif not namespace.skip_md5:
-                    hash_ = utils.file_hash(f_path)
-                    if hash_ != remote['md5']:
+
+                elif namespace.md5:
+                    if utils.file_hash(f_path) != remote['md5']:
                         equal = False
                         remote['comment'].append('md5: different')
 
@@ -372,10 +373,12 @@ class S3SyncTool(object):
                     local_size=stat.st_size,
                     local_path=f_path,
                     modified=stat.st_mtime,
-                    md5=utils.file_hash(f_path),
+                    md5=None,
                     state='+',
                     comment=[],
                 )
+                if namespace.md5:
+                    remote_files[key]['md5'] = utils.file_hash(f_path)
 
         # find renames
         if 'r' in namespace.modes:
@@ -388,7 +391,7 @@ class S3SyncTool(object):
                         continue
                     if data['size'] != new_data['local_size']:
                         continue
-                    if data['md5'] != new_data['md5']:
+                    if data['md5'] and data['md5'] != new_data['md5']:
                         continue
                     remote_files[name].update(
                         state='r',
@@ -420,26 +423,26 @@ class S3SyncTool(object):
     def on_remove(self, namespace):
         bucket = self.bucket()
         if not bucket:
-            raise UserError('Missing bucket')
+            raise errors.UserError('Missing bucket')
 
         path = namespace.path.replace('\\', '/')
 
         if path[-1] == '/':
-            raise UserError('Path is dir')
+            raise errors.UserError('Path is dir')
 
         files = bucket.list(delimiter='/', prefix=path)
         files = list(files)
 
         if not files:
-            raise UserError('File not found')
+            raise errors.UserError('File not found')
 
         if len(files) > 1:
-            raise UserError('Multiple files found')
+            raise errors.UserError('Multiple files found')
 
         remote_file = files[0]
 
         if not isinstance(remote_file, boto.s3.key.Key):
-            raise UserError('Try to remove dir')
+            raise errors.UserError('Try to remove dir')
 
         remote_file.delete()
         print('File successful deleted')
@@ -447,11 +450,11 @@ class S3SyncTool(object):
     def on_upload(self, namespace):
         bucket = self.bucket()
         if not bucket:
-            raise UserError('Missing bucket')
+            raise errors.UserError('Missing bucket')
 
         local_path = utils.file_path(namespace.path)
         if not os.path.exists(local_path):
-            raise UserError('Local path does not exists')
+            raise errors.UserError('Local path does not exists')
 
         key = utils.file_key(namespace.path)
         files = bucket.list(delimiter='/', prefix=key)
@@ -462,7 +465,7 @@ class S3SyncTool(object):
         elif not files:
             task = tasks.Upload()
         else:
-            raise UserError('Remote path exists. Use force flag.')
+            raise errors.UserError('Remote path exists. Use force flag.')
 
         stat = os.stat(local_path)
         data = {
@@ -676,7 +679,7 @@ def main():
 
     try:
         tool.run_cli()
-    except UserError as exc:
+    except errors.UserError as exc:
         tool.error(exc.args[0])
     except KeyboardInterrupt:
         tool.error('interrupted')

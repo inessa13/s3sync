@@ -2,6 +2,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import logging.config
+import os
 import threading
 import time
 
@@ -184,6 +185,12 @@ class Download(Task):
 
     def handler(self):
         file_path = utils.file_path(self.data['local_path'])
+
+        # ensure path
+        dir = os.path.dirname(file_path)
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+
         self.data['key'].get_contents_to_filename(
             file_path,
             cb=self.progress,
@@ -196,4 +203,6 @@ class DeleteLocal(Task):
         return 'delete_local'
 
     def handler(self):
-        raise NotImplementedError()
+        self.progress(0, 1)
+        os.remove(self.data['local_path'])
+        self.progress(1, 1)

@@ -1,15 +1,15 @@
+import hashlib
 import os
 import re
 
 import six
 
-from . import settings
+from . import errors, settings
 
 
 def file_hash(f_path):
-    from hashlib import md5
     file_ = open(f_path, 'rb')
-    hash_ = md5()
+    hash_ = hashlib.md5()
     while True:
         block = file_.read(128)
         if not block:
@@ -80,7 +80,7 @@ def iter_local_path(path, recursive=False):
         yield path
 
     else:
-        raise UserWarning('Invalid path {}'.format(path))
+        raise errors.UserError('Invalid path {}'.format(path))
 
 
 def iter_remote_path(bucket, path, recursive=False):
