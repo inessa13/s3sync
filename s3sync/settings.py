@@ -12,9 +12,10 @@ KEY_PATTERN = '{name} {storage} {size} {modified} {owner} {md5}'
 KEY_PATTERN_NAME_LEN = 60
 LIST_LIMIT = 20
 COMPARE_HASH = True
-THREAD_MAX_COUNT = 15
+THREAD_MAX_COUNT = 10
+ENDED_OUTPUT_MAX_COUNT = 10
 UPLOAD_CB_NUM = 20
-UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent:3.0f}% {speed}'
+UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent:3.0f}% {speed} {action} {name}'
 
 LOGGING = {
     'version': 1,

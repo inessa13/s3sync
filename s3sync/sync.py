@@ -119,6 +119,14 @@ class S3SyncTool(object):
             '-r', '--recursive', action='store_true', help='list recursive')
         cmd.add_argument(
             '--md5', action='store_true', help='compare file content')
+        cmd.add_argument(
+            '--force-upload',
+            action='store_true',
+            help='data transfer direction force change to upload')
+        cmd.add_argument(
+            '--force-download',
+            action='store_true',
+            help='data transfer direction force change to download')
 
         cmd = subparsers.add_parser('rm', help='remove remote file')
         cmd.set_defaults(func=self.on_remove)
@@ -178,6 +186,13 @@ class S3SyncTool(object):
             '--force-upload',
             action='store_true',
             help='data transfer direction force change to upload')
+        cmd.add_argument(
+            '--force-download',
+            action='store_true',
+            help='data transfer direction force change to download')
+        cmd.add_argument(
+            '-l', '--limit',
+            action='store', default=0, type=int, help='process limit')
 
         namespace = parser.parse_args()
 
@@ -356,7 +371,12 @@ class S3SyncTool(object):
 
                     remote['comment'].append('modified: {0}'.format(
                         local_modified - remote_modified))
-                    if local_modified > remote_modified:
+
+                    if namespace.force_upload:
+                        remote['state'] = '>'
+                    elif namespace.force_download:
+                        remote['state'] = '<'
+                    elif local_modified > remote_modified:
                         remote['state'] = '>'
                     else:
                         remote['state'] = '<'
@@ -489,13 +509,14 @@ class S3SyncTool(object):
         self.info('processing...')
 
         _t = time.time()
-        processed, _size = 0, 0
+        processed, size = 0, 0
 
         try:
-            processed, _size = self._update(files, namespace)
+            processed, size = self._update(files, namespace)
         finally:
-            if _t:
-                speed = utils.humanize_size(_size / _t)
+            delta = time.time() - _t
+            if delta:
+                speed = utils.humanize_size(size / delta)
                 self.info('average speed: %s', speed)
 
             self.info(
@@ -505,8 +526,9 @@ class S3SyncTool(object):
 
     def _update(self, files, namespace):
         processed = 0
-        _size = 0
+        size = 0
 
+        bucket = self.bucket()
         pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT)
         output_manager = reprint.output(
             output_type='list',
@@ -559,8 +581,7 @@ class S3SyncTool(object):
                 else:
                     continue
 
-            elif data['state'] == '>' or namespace.force_upload:
-                data['state'] = '>'
+            elif data['state'] == '>':
                 if self._check(
                         name, data, namespace.quiet,
                         namespace.confirm_replace_upload):
@@ -576,22 +597,22 @@ class S3SyncTool(object):
                 else:
                     continue
 
-            _size += data.get('local_size', 0)
+            pool.add_task(action, bucket, None, self.conf, name, data, output)
+            processed += 1
 
-            pool.add_task(
-                action,
-                self.bucket(),
-                None,
-                self.conf,
-                name,
-                data,
-                output,
-            )
+            if isinstance(action, tasks.Download):
+                size += data.get('size') or 0
+            elif isinstance(action, (tasks.Upload, tasks.ReplaceUpload)):
+                size += data.get('local_size') or 0
+
+            if processed >= namespace.limit > 0:
+                self.info('list limit reached!')
+                break
 
         pool.join()
         output_manager.__exit__(None, None, None)
 
-        return processed, _size
+        return processed, size
 
     def _check(self, name, data, quiet, confirm):
         if confirm:

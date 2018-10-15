@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import time
 
 import six
 
@@ -113,7 +114,7 @@ def humanize_size(value, multiplier=1024, label='Bps'):
     elif value > multiplier:
         value /= multiplier
         label = 'K' + label
-    return '{:.2f} {}'.format(value, label)
+    return '{:7.2f} {}'.format(value, label)
 
 
 def check_file_type(filename, types):
@@ -174,3 +175,20 @@ def find_project_root():
 @memoize
 def get_cwd():
     return os.getcwd()
+
+
+class Timeit(object):
+    def __enter__(self):
+        self._t = time.time()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print('{:.2f}'.format(time.time() - self._t))
+
+    def __init__(self, func=None):
+        self.func = func
+
+    def __call__(self, *args, **kwargs):
+        _t = time.time()
+        self.func(*args, **kwargs)
+        print('{} {:.2f}'.format(
+            self.func.__name__, time.time() - _t))

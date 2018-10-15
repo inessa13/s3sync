@@ -29,14 +29,16 @@ class Worker(threading.Thread):
             func, args = self.task_queue.get()
             try:
                 result = func(*args, worker=self)
-                self.result_queue.put(result)
+                if self.result_queue:
+                    self.result_queue.put(result)
             finally:
                 self.task_queue.task_done()
 
 
 class ThreadPool(object):
     def __init__(self, num_threads):
-        self.result_queue = six.moves.queue.Queue()
+        # self.result_queue = six.moves.queue.Queue()
+        self.result_queue = None
 
         self.task_queue = six.moves.queue.Queue(num_threads)
         for index in six.moves.range(num_threads):
@@ -74,6 +76,7 @@ class Task(object):
         self.data = data
         self.output = output
         self.worker = worker
+        self._t = time.time()
         self.handler()
 
     def progress(self, uploaded, full):
@@ -81,13 +84,10 @@ class Task(object):
         progress = round(float(uploaded) / full, 2) * 100
         progress_len = int(progress) * len_full / 100
 
-        if False and self.speed_queue.qsize():
-            count = self.speed_queue.qsize()
-            speed_sum = sum(
-                self.speed_queue.get(i)
-                for i in six.moves.range(count))
-            speed_value = float(speed_sum / count)
-            speed = utils.humanize_size(speed_value)
+        local_size = self.data.get('local_size')
+        if local_size:
+            uploaded = local_size * float(uploaded) / full
+            speed = utils.humanize_size(uploaded / (time.time() - self._t))
         else:
             speed = 'n\\a'
 
@@ -96,6 +96,8 @@ class Task(object):
             left=' ' * (len_full - progress_len),
             progress_percent=progress,
             speed=speed,
+            name=self.name,
+            action=str(self),
         )
         if self.output and self.worker:
             self.output[self.worker.index] = line
@@ -134,6 +136,7 @@ class Upload(Task):
             self.data['local_path'],
         )
         self.data['comment'] = ['uploaded']
+        self.output.append('uploaded {}'.format(self.name))
 
 
 class ReplaceUpload(Task):
@@ -150,6 +153,7 @@ class ReplaceUpload(Task):
             replace=True,
         )
         self.data['comment'] = ['uploaded(replaced)']
+        self.output.append('uploaded (replaced) {}'.format(self.name))
 
 
 class DeleteRemote(Task):
@@ -187,15 +191,22 @@ class Download(Task):
         file_path = utils.file_path(self.data['local_path'])
 
         # ensure path
-        dir = os.path.dirname(file_path)
-        if not os.path.exists(dir):
-            os.makedirs(dir)
+        file_dir = os.path.dirname(file_path)
+        if not os.path.exists(file_dir):
+            os.makedirs(file_dir)
 
         self.data['key'].get_contents_to_filename(
             file_path,
             cb=self.progress,
             num_cb=20,
         )
+
+        line = 'downloaded {}'.format(self.name)
+        prefix = settings.THREAD_MAX_COUNT
+        total = prefix + settings.ENDED_OUTPUT_MAX_COUNT
+        if len(self.output) >= total:
+            self.output[prefix:total] = self.output[prefix + 1:total]
+        self.output.append(line)
 
 
 class DeleteLocal(Task):
