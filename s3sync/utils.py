@@ -1,8 +1,5 @@
-import fcntl
 import os
 import re
-import struct
-import termios
 
 import six
 
@@ -101,21 +98,6 @@ def iter_remote_path(bucket, path, recursive=False):
         params['prefix'] = key.replace('\\', '/')
 
     return bucket.list(**params)
-
-
-def get_terminal_size(descriptor=1):
-    """
-    Returns height and width of current terminal. First tries to get
-    size via termios.TIOCGWINSZ, then from environment. Defaults to 25
-    lines x 80 columns if both methods fail.
-
-    :param descriptor: file descriptor (default: 1=stdout)
-    """
-    try:
-        return struct.unpack(
-            'hh', fcntl.ioctl(descriptor, termios.TIOCGWINSZ, '1234'))
-    except ValueError:
-        return os.getenv('LINES', '25'), os.getenv('COLUMNS', '80')
 
 
 def humanize_size(value, multiplier=1024, label='Bps'):

@@ -189,6 +189,7 @@ class S3SyncTool(object):
 
         if getattr(namespace, 'func', None):
             self.handler(namespace)
+            return
 
         parser.print_help()
 
@@ -505,7 +506,7 @@ class S3SyncTool(object):
 
         pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT)
         output_manager = reprint.output(
-            output_type="list",
+            output_type='list',
             initial_len=settings.THREAD_MAX_COUNT,
             interval=0)
         output = output_manager.__enter__()
