@@ -21,7 +21,7 @@ def file_hash(f_path):
 
 
 def file_path_info(path):
-    project_root = find_project_root()
+    project_root = find_project_root() or get_cwd()
     current_root = get_cwd()
 
     if not path or path == '.':

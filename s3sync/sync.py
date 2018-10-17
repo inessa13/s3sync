@@ -101,32 +101,7 @@ class S3SyncTool(object):
 
         cmd = subparsers.add_parser('diff', help='diff local and remote')
         cmd.set_defaults(func=self.on_diff)
-        cmd.add_argument(
-            '-f', '--file-types',
-            action='store',
-            help='file types (extension) for compare')
-        cmd.add_argument(
-            '-i', '--ignore-case',
-            action='store_true', help='ignore file path case')
-        cmd.add_argument(
-            '-m', '--modes',
-            action='store', default='-<>+r',
-            help='modes of comparing (by default: -=<>+r)')
-        cmd.add_argument(
-            '-p', '--path',
-            action='store', default='', help='path to compare')
-        cmd.add_argument(
-            '-r', '--recursive', action='store_true', help='list recursive')
-        cmd.add_argument(
-            '--md5', action='store_true', help='compare file content')
-        cmd.add_argument(
-            '--force-upload',
-            action='store_true',
-            help='data transfer direction force change to upload')
-        cmd.add_argument(
-            '--force-download',
-            action='store_true',
-            help='data transfer direction force change to download')
+        diff_arguments(cmd)
 
         cmd = subparsers.add_parser('rm', help='remove remote file')
         cmd.set_defaults(func=self.on_remove)
@@ -142,33 +117,19 @@ class S3SyncTool(object):
 
         cmd = subparsers.add_parser('update', help='update local or remote')
         cmd.set_defaults(func=self.on_update)
-        cmd.add_argument(
-            '-f', '--file-types',
-            action='store',
-            help='file types (extension) for compare')
-        cmd.add_argument(
-            '-i', '--ignore-case',
-            action='store_true', help='ignore file path case')
-        cmd.add_argument(
-            '-m', '--modes',
-            action='store', default='-<>+r',
-            help='modes of comparing (values: -=<>+)')
-        cmd.add_argument(
-            '-p', '--path',
-            action='store', default='', help='path to compare')
+        diff_arguments(cmd)
         cmd.add_argument(
             '-q', '--quiet',
             action='store_true', help='quiet (no interactive)')
         cmd.add_argument(
-            '-r', '--recursive', action='store_true', help='list recursive')
-        cmd.add_argument(
-            '--md5', action='store_true', help='compare file content')
-        cmd.add_argument(
-            '--confirm-upload',
+            '-U', '--confirm-upload',
             action='store_true', help='confirm upload action')
         cmd.add_argument(
-            '--confirm-download',
+            '-D', '--confirm-download',
             action='store_true', help='confirm download action')
+        cmd.add_argument(
+            '-R', '--confirm-rename-remote',
+            action='store_true', help='confirm rename remote file')
         cmd.add_argument(
             '--confirm-replace-upload',
             action='store_true', help='confirm replace on upload')
@@ -181,17 +142,6 @@ class S3SyncTool(object):
         cmd.add_argument(
             '--confirm-delete-remote',
             action='store_true', help='confirm delete remote file')
-        cmd.add_argument(
-            '--confirm-rename-remote',
-            action='store_true', help='confirm rename remote file')
-        cmd.add_argument(
-            '--force-upload',
-            action='store_true',
-            help='data transfer direction force change to upload')
-        cmd.add_argument(
-            '--force-download',
-            action='store_true',
-            help='data transfer direction force change to download')
         cmd.add_argument(
             '-l', '--limit',
             action='store', default=0, type=int, help='process limit')
@@ -353,8 +303,11 @@ class S3SyncTool(object):
 
                 if stat.st_size != remote['size']:
                     equal = False
-                    remote['comment'].append('size: {0}%'.format(
-                        round(stat.st_size * 100 / float(remote['size']), 2)))
+                    if remote['size']:
+                        diff = stat.st_size * 100 / float(remote['size'])
+                    else:
+                        diff = 0
+                    remote['comment'].append('size: {:.2f}%'.format(diff))
 
                 elif namespace.md5:
                     if utils.file_hash(f_path) != remote['md5']:
@@ -695,6 +648,37 @@ class S3SyncTool(object):
     def _print_diff_line(self, name, data):
         print('{} {} {}'.format(
             data['state'], name, ', '.join(data.get('comment', []))).encode('utf8'))
+
+
+def diff_arguments(cmd):
+    cmd.add_argument(
+        '-i', '--ignore-case',
+        action='store_true', help='ignore file path case')
+    cmd.add_argument(
+        '-r', '--recursive', action='store_true', help='list recursive')
+    cmd.add_argument(
+        '-5', '--md5', action='store_true', help='compare file content')
+
+    cmd.add_argument(
+        '--force-upload',
+        action='store_true',
+        help='data transfer direction force change to upload')
+    cmd.add_argument(
+        '--force-download',
+        action='store_true',
+        help='data transfer direction force change to download')
+
+    cmd.add_argument(
+        '-p', '--path',
+        action='store', default='', help='path to compare')
+    cmd.add_argument(
+        '-m', '--modes',
+        action='store', default='-<>+r',
+        help='modes of comparing (by default: -=<>+r)')
+    cmd.add_argument(
+        '-f', '--file-types',
+        action='store',
+        help='file types (extension) for compare')
 
 
 def main():
