@@ -14,16 +14,31 @@ from . import settings, utils
 logger = logging.getLogger(__name__)
 
 
+class QueueEx(six.moves.queue.Queue):
+    def join_with_timeout(self, timeout):
+        self.all_tasks_done.acquire()
+        try:
+            end_time = time.time() + timeout
+            while self.unfinished_tasks:
+                remaining = end_time - time.time()
+                if remaining <= 0.0:
+                    raise RuntimeError('not finished')
+                self.all_tasks_done.wait(remaining)
+        finally:
+            self.all_tasks_done.release()
+
+
 class Worker(threading.Thread):
     """ Thread executing tasks from a given tasks queue """
 
-    def __init__(self, index, task_queue, result_queue):
+    def __init__(self, index, task_queue, result_queue, output=None):
         super(Worker, self).__init__().__init__()
         self.index = index
         self.task_queue = task_queue
         self.result_queue = result_queue
         self.daemon = True
         self.speed_list = []
+        self.output = output
 
     def run(self):
         while True:
@@ -43,20 +58,25 @@ class Worker(threading.Thread):
 
 
 class ThreadPool(object):
-    def __init__(self, num_threads):
-        # self.result_queue = six.moves.queue.Queue()
-        self.result_queue = None
+    def __init__(self, num_threads, auto_start=False):
+        self.num_threads = num_threads
+        self.result_queue = None  # six.moves.queue.Queue()
+        self.task_queue = QueueEx()
 
-        self.task_queue = six.moves.queue.Queue(num_threads)
-        for index in six.moves.range(num_threads):
-            worker = Worker(index, self.task_queue, self.result_queue)
+        if auto_start:
+            self.start()
+
+    def start(self, output=None):
+        for index in six.moves.range(self.num_threads):
+            worker = Worker(index, self.task_queue, self.result_queue, output)
             worker.start()
 
-    def add_task(self, task, bucket, speed_queue, conf, name, data, output):
-        args = bucket, speed_queue, conf, name, data, output
+    def add_task(self, task, bucket, conf, name, data):
+        args = bucket, conf, name, data
         self.task_queue.put((task, args))
 
     def join(self):
+        # self.task_queue.join_with_timeout(10)
         self.task_queue.join()
 
 
@@ -65,26 +85,21 @@ class Task(object):
 
     def __init__(self):
         self.bucket = None
-        self.speed_queue = None
         self.conf = None
         self.name = None
         self.data = None
-        self.output = None
         self.worker = None
 
     def handler(self):
         raise NotImplementedError()
 
-    def __call__(
-            self, bucket, speed_queue, conf, name, data, output, worker=None):
-
+    def __call__(self, bucket, conf, name, data, worker=None):
         self.bucket = bucket
-        self.speed_queue = speed_queue
         self.conf = conf
         self.name = name
         self.data = data
-        self.output = output
         self.worker = worker
+
         self._t = time.time()
 
         self.handler()
@@ -119,26 +134,34 @@ class Task(object):
             name=self.name,
             action=str(self),
         )
-        if self.output and self.worker:
-            self.output[self.worker.index] = line
+        self.output_edit(line)
+
+    def output_edit(self, line):
+        if self.worker:
+            self.worker.output[self.worker.index] = line
         else:
             print(line)
 
     def output_finish(self):
-        with self.output.lock:
+        line = '{} {}'.format(self.done, self.name)
+        if not self.worker:
+            print(line)
+            return
+
+        output = self.worker.output
+        with output.lock:
             prefix = settings.THREAD_MAX_COUNT
             total = prefix + settings.ENDED_OUTPUT_MAX_COUNT
-            if len(self.output) >= total:
-                self.output[prefix:total] = self.output[prefix + 1:total]
+            if len(output) >= total:
+                output[prefix:total] = output[prefix + 1:total]
 
-        self.output.append('{} {}'.format(self.done, self.name))
+        output.append(line)
 
 
-def _upload(key, callback, speed_queue, local_size, local_path, replace=False):
+def _upload(key, callback, local_path, replace=False):
     local_file_path = utils.file_path(local_path)
 
     with open(local_file_path, 'rb') as local_file:
-        time_start = time.time()
         key.set_contents_from_file(
             local_file,
             replace=replace,
@@ -147,9 +170,6 @@ def _upload(key, callback, speed_queue, local_size, local_path, replace=False):
             reduced_redundancy=True,
             rewind=True,
         )
-        delta = time.time() - time_start
-        if delta and speed_queue:
-            speed_queue.put(float(local_size / delta))
 
 
 class Upload(Task):
@@ -165,8 +185,6 @@ class Upload(Task):
         _upload(
             boto.s3.key.Key(bucket=self.bucket, name=self.name),
             self.progress,
-            self.speed_queue,
-            self.data.get('local_size'),
             self.data['local_path'],
         )
         self.data['comment'] = ['uploaded']
@@ -185,8 +203,6 @@ class ReplaceUpload(Task):
         _upload(
             self.data['key'],
             self.progress,
-            self.speed_queue,
-            self.data.get('local_size'),
             self.data['local_path'],
             replace=True,
         )

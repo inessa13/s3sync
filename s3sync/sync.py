@@ -137,6 +137,8 @@ class S3SyncTool(object):
         cmd.add_argument('path', action='store', help='path to upload')
         cmd.add_argument(
             '-f', '--force', action='store_true', help='force upload')
+        cmd.add_argument(
+            '-r', '--recursive', action='store_true', help='list recursive')
 
         cmd = subparsers.add_parser('update', help='update local or remote')
         cmd.set_defaults(func=self.on_update)
@@ -149,7 +151,7 @@ class S3SyncTool(object):
             action='store_true', help='ignore file path case')
         cmd.add_argument(
             '-m', '--modes',
-            action='store', default='-<>+',
+            action='store', default='-<>+r',
             help='modes of comparing (values: -=<>+)')
         cmd.add_argument(
             '-p', '--path',
@@ -411,7 +413,7 @@ class S3SyncTool(object):
                         continue
                     if data['size'] != new_data['local_size']:
                         continue
-                    if data['md5'] and data['md5'] != new_data['md5']:
+                    if namespace.md5 and data['md5'] and data['md5'] != new_data['md5']:
                         continue
                     remote_files[name].update(
                         state='r',
@@ -472,33 +474,44 @@ class S3SyncTool(object):
         if not bucket:
             raise errors.UserError('Missing bucket')
 
-        local_path = utils.file_path(namespace.path)
-        if not os.path.exists(local_path):
-            raise errors.UserError('Local path does not exists')
+        files = {}
+        for local_path in utils.iter_local_path(
+                namespace.path, namespace.recursive):
+            if not os.path.isfile(local_path):
+                continue
 
-        key = utils.file_key(namespace.path)
-        files = bucket.list(delimiter='/', prefix=key)
-        files = list(files)
+            key = utils.file_key(local_path)
+            files[key] = {
+                'local_size': os.stat(local_path).st_size,
+                'local_path': local_path,
+            }
 
-        if files and namespace.force:
-            task = tasks.ReplaceUpload()
-        elif not files:
-            task = tasks.Upload()
-        else:
-            raise errors.UserError('Remote path exists. Use force flag.')
+        for remote in utils.iter_remote_path(
+                bucket, namespace.path, namespace.recursive):
+            if remote.name in files:
+                files[remote.name]['key'] = remote
 
-        stat = os.stat(local_path)
-        data = {
-            'key': boto.s3.key.Key(bucket=bucket, name=key),
-            'local_size': stat.st_size,
-            'local_path': local_path,
-        }
+        conflicts = 0
+        pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT, auto_start=False)
 
-        task(bucket, None, self.conf, key, data, None)
-        if data['comment']:
-            print(data['comment'][0])
-        else:
-            print('File successful uploaded')
+        for key, data in six.iteritems(files):
+            if 'key' in data and namespace.force:
+                task = tasks.ReplaceUpload()
+            elif 'key' not in data:
+                data['key'] = boto.s3.key.Key(bucket=bucket, name=key)
+                task = tasks.Upload()
+            else:
+                conflicts += 1
+                continue
+
+            pool.add_task(task, bucket, self.conf, key, data)
+
+        if conflicts:
+            print('{} remote paths exists, use force flag'.format(conflicts))
+
+        with reprint.output(initial_len=settings.THREAD_MAX_COUNT) as output:
+            pool.start(output)
+            pool.join()
 
     def on_update(self, namespace):
         files = self.on_diff(namespace, print_=False)
@@ -530,11 +543,6 @@ class S3SyncTool(object):
 
         bucket = self.bucket()
         pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT)
-        output_manager = reprint.output(
-            output_type='list',
-            initial_len=settings.THREAD_MAX_COUNT,
-            interval=0)
-        output = output_manager.__enter__()
 
         for name, data in six.iteritems(files):
             if data['state'] == '=':
@@ -597,7 +605,7 @@ class S3SyncTool(object):
                 else:
                     continue
 
-            pool.add_task(action, bucket, None, self.conf, name, data, output)
+            pool.add_task(action, bucket, self.conf, name, data)
             processed += 1
 
             if isinstance(action, tasks.Download):
@@ -609,8 +617,9 @@ class S3SyncTool(object):
                 self.info('list limit reached!')
                 break
 
-        pool.join()
-        output_manager.__exit__(None, None, None)
+        with reprint.output(initial_len=settings.THREAD_MAX_COUNT) as output:
+            pool.start(output)
+            pool.join()
 
         return processed, size
 
@@ -681,7 +690,7 @@ class S3SyncTool(object):
             }
 
         pattern = self.conf.get('key_pattern') or settings.KEY_PATTERN
-        self.info(pattern.format(**params))
+        print(pattern.format(**params))
 
     def _print_diff_line(self, name, data):
         print('{} {} {}'.format(
