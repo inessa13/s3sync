@@ -57,59 +57,82 @@ class Worker(threading.Thread):
             self.speed_list) + current) / float(len(self.speed_list) + 1)
 
 
-# TODO
-class SysWorker(threading.Thread):
-    def __init__(self, index, result_queue, output=None):
-        super(SysWorker, self).__init__().__init__()
-        self.index = index
-        self.result_queue = result_queue
+class System(threading.Thread):
+    def __init__(self, index, result_queue, output, tasks_total):
+        super(System, self).__init__()
         self.daemon = True
+
+        self.index = index
+        self.queue = result_queue
         self.output = output
 
-        self.speed_list = []
-        self.processed_upload = 0
-        self.processed_download = 0
+        self.tasks_total = tasks_total
+        self.tasks_processed = 0
+        self.size = 0
+        self._t = time.time()
 
     def run(self):
         while True:
-            mode, speed = self.result_queue.get()
+            data = self.queue.get()
             try:
-                result = func(*args, worker=self)
-                if self.result_queue:
-                    self.result_queue.put(result)
+                self.handler(data)
             finally:
-                self.task_queue.task_done()
+                self.queue.task_done()
 
-    def speed(self, current):
-        if not self.speed_list:
-            return current
-        return (sum(
-            self.speed_list) + current) / float(len(self.speed_list) + 1)
+    def handler(self, data):
+        self.tasks_processed += 1
+        self.size += data['size']
+
+        len_full = 40
+        progress = float(self.tasks_processed) / self.tasks_total * 100
+        progress_len = int(progress) * len_full / 100
+
+        delta = time.time() - self._t
+        if delta:
+            speed = utils.humanize_size(self.size / delta)
+        else:
+            speed = 'n\\a'
+
+        self.output[self.index] = settings.UPLOAD_FORMAT.format(
+            progress='=' * progress_len,
+            left=' ' * (len_full - progress_len),
+            progress_percent=progress,
+            speed=speed,
+            info='{}/{}'.format(self.tasks_processed, self.tasks_total),
+        )
 
 
 class ThreadPool(object):
     def __init__(self, num_threads, auto_start=False):
         self.num_threads = num_threads
-        self.result_queue = None  # six.moves.queue.Queue()
+        self.result_queue = six.moves.queue.Queue()
         self.task_queue = QueueEx()
+        self.sys = None
+        self.tasks_total = 0
 
         if auto_start:
             self.start()
 
     def start(self, output=None):
-        # total = Worker(0, self.task_queue, self.result_queue, output)
-        # total.start()
-        for index in six.moves.range(0, self.num_threads):
+        if self.num_threads > 1:
+            self.sys = System(0, self.result_queue, output, self.tasks_total)
+            self.sys.start()
+
+        for index in six.moves.range(1, self.num_threads):
             worker = Worker(index, self.task_queue, self.result_queue, output)
             worker.start()
 
     def add_task(self, task, bucket, conf, name, data):
+        self.tasks_total += 1
         args = bucket, conf, name, data
         self.task_queue.put((task, args))
 
     def join(self):
         # self.task_queue.join_with_timeout(10)
         self.task_queue.join()
+
+        if self.sys is not None:
+            self.sys.join(timeout=1)
 
 
 class Task(object):
@@ -142,6 +165,8 @@ class Task(object):
 
         self.output_finish()
 
+        return {'size': size}
+
     def size(self):
         return 0
 
@@ -163,8 +188,7 @@ class Task(object):
             left=' ' * (len_full - progress_len),
             progress_percent=progress,
             speed=speed,
-            name=self.name,
-            action=str(self),
+            info='{:s} {}'.format(self, self.name)
         )
         self.output_edit(line)
 

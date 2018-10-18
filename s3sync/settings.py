@@ -15,7 +15,7 @@ COMPARE_HASH = True
 THREAD_MAX_COUNT = 16
 ENDED_OUTPUT_MAX_COUNT = 16
 UPLOAD_CB_NUM = 10
-UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent:3.0f}% {speed} {action} {name}'
+UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent:3.0f}% {speed} {info}'
 
 LOGGING = {
     'version': 1,

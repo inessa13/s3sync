@@ -242,7 +242,7 @@ class S3SyncTool(object):
 
     def on_diff(self, namespace, print_=True):
         if namespace.all:
-            modes = '=+=<>r'
+            modes = '=+-<>r'
         else:
             modes = namespace.modes
 
