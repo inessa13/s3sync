@@ -241,6 +241,11 @@ class S3SyncTool(object):
             self._print_key(key)
 
     def on_diff(self, namespace, print_=True):
+        if namespace.all:
+            modes = '=+=<>r'
+        else:
+            modes = namespace.modes
+
         src_files = []
         for file_path in utils.iter_local_path(
                 namespace.path, namespace.recursive):
@@ -336,12 +341,11 @@ class S3SyncTool(object):
                     else:
                         remote['state'] = '<'
 
-                if remote['state'] not in namespace.modes:
+                if remote['state'] not in modes:
                     del remote_files[key]
 
             else:
-                if ('+' not in namespace.modes
-                        and 'r' not in namespace.modes):
+                if '+' not in modes and 'r' not in modes:
                     continue
 
                 remote_files[key] = dict(
@@ -356,7 +360,7 @@ class S3SyncTool(object):
                     remote_files[key]['md5'] = utils.file_hash(f_path)
 
         # find renames
-        if 'r' in namespace.modes:
+        if 'r' in modes:
             to_del = []
             for key, new_data in six.iteritems(remote_files):
                 if new_data['state'] != '+':
@@ -381,17 +385,26 @@ class S3SyncTool(object):
             for key in to_del:
                 del remote_files[key]
 
-        if '-' not in namespace.modes or '+' not in namespace.modes:
-            for key, value in remote_files.items():
-                if value['state'] not in namespace.modes:
-                    del remote_files[key]
+        remote_files = {
+            k: v for k, v in six.iteritems(remote_files) if v['state'] in modes
+        }
 
-        if print_:
+        if print_ and not namespace.brief:
             keys = remote_files.keys()
             keys.sort()
             for key in keys:
                 self._print_diff_line(key, remote_files[key])
-            self.info('{0} differences', len(remote_files.keys()))
+
+        if remote_files:
+            counter = collections.Counter()
+            for data in six.itervalues(remote_files):
+                counter.update(data['state'])
+            info = ', '.join(
+                '{}: {}'.format(k, v) for k, v in counter.most_common())
+            self.info('{} differences ({})', len(remote_files), info)
+
+        else:
+            self.info('{} differences', len(remote_files))
 
         return remote_files
 
@@ -498,6 +511,8 @@ class S3SyncTool(object):
         pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT)
 
         for name, data in six.iteritems(files):
+            action = None
+
             if data['state'] == '=':
                 processed += 1
                 continue
@@ -558,6 +573,9 @@ class S3SyncTool(object):
                 else:
                     continue
 
+            if not action:
+                logging.error('Unknown action')
+                continue
             pool.add_task(action, bucket, self.conf, name, data)
             processed += 1
 
@@ -652,6 +670,11 @@ class S3SyncTool(object):
 
 def diff_arguments(cmd):
     cmd.add_argument(
+        '-a', '--all',
+        action='store_true', help='use all modes. ignores -m')
+    cmd.add_argument(
+        '-b', '--brief', action='store_true', help='brief diff')
+    cmd.add_argument(
         '-i', '--ignore-case',
         action='store_true', help='ignore file path case')
     cmd.add_argument(
@@ -674,7 +697,7 @@ def diff_arguments(cmd):
     cmd.add_argument(
         '-m', '--modes',
         action='store', default='-<>+r',
-        help='modes of comparing (by default: -=<>+r)')
+        help='modes of comparing (by default: -<>+r)')
     cmd.add_argument(
         '-f', '--file-types',
         action='store',

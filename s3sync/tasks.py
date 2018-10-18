@@ -57,6 +57,36 @@ class Worker(threading.Thread):
             self.speed_list) + current) / float(len(self.speed_list) + 1)
 
 
+# TODO
+class SysWorker(threading.Thread):
+    def __init__(self, index, result_queue, output=None):
+        super(SysWorker, self).__init__().__init__()
+        self.index = index
+        self.result_queue = result_queue
+        self.daemon = True
+        self.output = output
+
+        self.speed_list = []
+        self.processed_upload = 0
+        self.processed_download = 0
+
+    def run(self):
+        while True:
+            mode, speed = self.result_queue.get()
+            try:
+                result = func(*args, worker=self)
+                if self.result_queue:
+                    self.result_queue.put(result)
+            finally:
+                self.task_queue.task_done()
+
+    def speed(self, current):
+        if not self.speed_list:
+            return current
+        return (sum(
+            self.speed_list) + current) / float(len(self.speed_list) + 1)
+
+
 class ThreadPool(object):
     def __init__(self, num_threads, auto_start=False):
         self.num_threads = num_threads
@@ -67,7 +97,9 @@ class ThreadPool(object):
             self.start()
 
     def start(self, output=None):
-        for index in six.moves.range(self.num_threads):
+        # total = Worker(0, self.task_queue, self.result_queue, output)
+        # total.start()
+        for index in six.moves.range(0, self.num_threads):
             worker = Worker(index, self.task_queue, self.result_queue, output)
             worker.start()
 
