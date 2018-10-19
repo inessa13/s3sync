@@ -1,18 +1,19 @@
-import fcntl
+from __future__ import absolute_import, print_function, unicode_literals
+
+import argparse
+import hashlib
 import os
 import re
-import struct
-import termios
+import time
 
 import six
 
-from . import settings
+from . import errors, settings
 
 
 def file_hash(f_path):
-    from hashlib import md5
     file_ = open(f_path, 'rb')
-    hash_ = md5()
+    hash_ = hashlib.md5()
     while True:
         block = file_.read(128)
         if not block:
@@ -23,7 +24,7 @@ def file_hash(f_path):
 
 
 def file_path_info(path):
-    project_root = find_project_root()
+    project_root = find_project_root() or get_cwd()
     current_root = get_cwd()
 
     if not path or path == '.':
@@ -83,7 +84,7 @@ def iter_local_path(path, recursive=False):
         yield path
 
     else:
-        raise UserWarning('Invalid path {}'.format(path))
+        raise errors.UserError('Invalid path {}'.format(path))
 
 
 def iter_remote_path(bucket, path, recursive=False):
@@ -103,21 +104,6 @@ def iter_remote_path(bucket, path, recursive=False):
     return bucket.list(**params)
 
 
-def get_terminal_size(descriptor=1):
-    """
-    Returns height and width of current terminal. First tries to get
-    size via termios.TIOCGWINSZ, then from environment. Defaults to 25
-    lines x 80 columns if both methods fail.
-
-    :param descriptor: file descriptor (default: 1=stdout)
-    """
-    try:
-        return struct.unpack(
-            'hh', fcntl.ioctl(descriptor, termios.TIOCGWINSZ, '1234'))
-    except ValueError:
-        return os.getenv('LINES', '25'), os.getenv('COLUMNS', '80')
-
-
 def humanize_size(value, multiplier=1024, label='Bps'):
     if value > multiplier ** 4:
         value /= multiplier ** 4
@@ -131,7 +117,10 @@ def humanize_size(value, multiplier=1024, label='Bps'):
     elif value > multiplier:
         value /= multiplier
         label = 'K' + label
-    return '{:.2f} {}'.format(value, label)
+    else:
+        label = ' ' + label
+
+    return '{:7.2f} {}'.format(value, label)
 
 
 def check_file_type(filename, types):
@@ -192,3 +181,50 @@ def find_project_root():
 @memoize
 def get_cwd():
     return os.getcwd()
+
+
+class Timeit(object):
+    def __init__(self, func=None):
+        self.func = func
+        self._t = None
+
+    def __enter__(self):
+        self._t = time.time()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print('{:.2f}'.format(time.time() - self._t))
+
+    def __call__(self, *args, **kwargs):
+        _t = time.time()
+        self.func(*args, **kwargs)
+        print('{} {:.2f}'.format(
+            self.func.__name__, time.time() - _t))
+
+
+class Formatter(argparse.HelpFormatter):
+    def __init__(
+            self, prog, indent_increment=2, max_help_position=30, width=None):
+        super(Formatter, self).__init__(
+            prog, indent_increment, max_help_position, width)
+
+    def _format_action_invocation(self, action):
+        if not action.option_strings:
+            metavar, = self._metavar_formatter(action, action.dest)(1)
+            return metavar
+
+        parts = []
+        # if the Optional doesn't take a value, format is:
+        #    -s, --long
+        if action.nargs == 0:
+            parts.extend(action.option_strings)
+
+        # if the Optional takes a value, format is:
+        #    -s, --long ARGS
+        else:
+            default = action.dest.upper()
+            args_string = self._format_args(action, default)
+            for option_string in action.option_strings:
+                parts.append(option_string)
+            parts[-1] += ' %s' % args_string
+
+        return ', '.join(parts)

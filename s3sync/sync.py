@@ -9,6 +9,7 @@ import logging.config
 import os
 import time
 
+import argcomplete
 import boto.s3
 import boto.s3.connection
 import boto.s3.key
@@ -16,17 +17,9 @@ import reprint
 import six
 import yaml
 
-from . import settings, tasks, utils
+from . import __version__, errors, settings, tasks, utils
 
 logger = logging.getLogger(__name__)
-
-
-class BaseError(Exception):
-    pass
-
-
-class UserError(BaseError):
-    pass
 
 
 class S3SyncTool(object):
@@ -74,8 +67,13 @@ class S3SyncTool(object):
 
     def run_cli(self):
         parser = argparse.ArgumentParser()
+        parser.add_argument(
+            '-V', '--version',
+            action='version',
+            version='%(prog)s ' + __version__,
+            help='show version and exit')
 
-        subparsers = parser.add_subparsers()
+        subparsers = parser.add_subparsers(title='list of commands')
 
         cmd = subparsers.add_parser('config', help='show/edit config')
         cmd.set_defaults(func=self.on_config)
@@ -87,6 +85,7 @@ class S3SyncTool(object):
             '--set', action='store', help='set config data')
 
         cmd = subparsers.add_parser('init', help='init project')
+
         cmd.set_defaults(func=self.on_init)
         cmd.add_argument(
             'bucket', action='store', help='bucket for sync')
@@ -94,7 +93,10 @@ class S3SyncTool(object):
         cmd = subparsers.add_parser('buckets', help='list buckets')
         cmd.set_defaults(func=self.on_list_buckets)
 
-        cmd = subparsers.add_parser('list', help='list files')
+        cmd = subparsers.add_parser(
+            'list',
+            formatter_class=utils.Formatter,
+            help='list files')
         cmd.set_defaults(func=self.on_list)
         cmd.add_argument(
             '-b', '--bucket', action='store', help='bucket')
@@ -107,25 +109,48 @@ class S3SyncTool(object):
             '-l', '--limit',
             action='store', default=10, type=int, help='output limit')
 
-        cmd = subparsers.add_parser('diff', help='diff local and remote')
-        cmd.set_defaults(func=self.on_diff)
-        cmd.add_argument(
-            '-f', '--file-types',
-            action='store',
-            help='file types (extension) for compare')
-        cmd.add_argument(
-            '-m', '--modes',
-            action='store', default='-<>+r',
-            help='modes of comparing (by default: -=<>+r)')
-        cmd.add_argument(
+        common_diff = argparse.ArgumentParser(add_help=False)
+        common_diff.add_argument(
+            '-a', '--all',
+            action='store_true', help='use all modes. ignores -m')
+        common_diff.add_argument(
+            '-b', '--brief', action='store_true', help='brief diff')
+        common_diff.add_argument(
+            '-i', '--ignore-case',
+            action='store_true', help='ignore file path case')
+        common_diff.add_argument(
+            '-r', '--recursive', action='store_true', help='list recursive')
+        common_diff.add_argument(
+            '-5', '--md5', action='store_true', help='compare file content')
+
+        common_diff.add_argument(
+            '--force-upload',
+            action='store_true',
+            help='data transfer direction force change to upload')
+        common_diff.add_argument(
+            '--force-download',
+            action='store_true',
+            help='data transfer direction force change to download')
+
+        common_diff.add_argument(
             '-p', '--path',
             action='store', default='', help='path to compare')
-        cmd.add_argument(
-            '-r', '--recursive', action='store_true', help='list recursive')
-        cmd.add_argument(
-            '--skip-md5',
-            action='store_true',
-            help='skip file content comparing')
+        common_diff.add_argument(
+            '-m', '--modes',
+            action='store', default='-<>+r',
+            help='modes of comparing (by default: -<>+r)')
+        common_diff.add_argument(
+            '-f', '--file-types',
+            action='store',
+            metavar='TYPES',
+            help='file types (extension) for compare')
+
+        cmd = subparsers.add_parser(
+            'diff',
+            parents=[common_diff],
+            formatter_class=utils.Formatter,
+            help='diff local and remote')
+        cmd.set_defaults(func=self.on_diff)
 
         cmd = subparsers.add_parser('rm', help='remove remote file')
         cmd.set_defaults(func=self.on_remove)
@@ -136,65 +161,59 @@ class S3SyncTool(object):
         cmd.add_argument('path', action='store', help='path to upload')
         cmd.add_argument(
             '-f', '--force', action='store_true', help='force upload')
+        cmd.add_argument(
+            '-r', '--recursive', action='store_true', help='list recursive')
 
-        cmd = subparsers.add_parser('update', help='update local or remote')
+        cmd = subparsers.add_parser(
+            'update',
+            parents=[common_diff],
+            formatter_class=utils.Formatter,
+            help='update local or remote')
         cmd.set_defaults(func=self.on_update)
         cmd.add_argument(
-            '-f', '--file-types',
+            '-l', '--limit',
             action='store',
-            help='file types (extension) for compare')
-        cmd.add_argument(
-            '-m', '--modes',
-            action='store', default='-<>+',
-            help='modes of comparing (values: -=<>+)')
-        cmd.add_argument(
-            '-p', '--path',
-            action='store', default='', help='path to compare')
+            default=0,
+            metavar='L',
+            type=int,
+            help='process limit')
         cmd.add_argument(
             '-q', '--quiet',
             action='store_true', help='quiet (no interactive)')
         cmd.add_argument(
-            '-r', '--recursive', action='store_true', help='list recursive')
-        cmd.add_argument(
-            '--skip-md5',
-            action='store_true',
-            help='skip file content comparing')
-        cmd.add_argument(
-            '--confirm-upload',
+            '-U', '--upload',
             action='store_true', help='confirm upload action')
         cmd.add_argument(
-            '--confirm-download',
+            '-D', '--download',
             action='store_true', help='confirm download action')
         cmd.add_argument(
-            '--confirm-replace-upload',
-            action='store_true', help='confirm replace on upload')
-        cmd.add_argument(
-            '--confirm-replace-download',
-            action='store_true', help='confirm replace on download')
-        cmd.add_argument(
-            '--confirm-delete-local',
-            action='store_true', help='confirm delete local file')
-        cmd.add_argument(
-            '--confirm-delete-remote',
-            action='store_true', help='confirm delete remote file')
-        cmd.add_argument(
-            '--confirm-rename-remote',
+            '-R', '--rename-remote',
             action='store_true', help='confirm rename remote file')
         cmd.add_argument(
-            '--force-upload',
-            action='store_true',
-            help='data transfer direction force change to upload')
+            '--replace-upload',
+            action='store_true', help='confirm replace on upload')
+        cmd.add_argument(
+            '--replace-download',
+            action='store_true', help='confirm replace on download')
+        cmd.add_argument(
+            '--delete-local',
+            action='store_true', help='confirm delete local file')
+        cmd.add_argument(
+            '--delete-remote',
+            action='store_true', help='confirm delete remote file')
 
+        argcomplete.autocomplete(parser)
         namespace = parser.parse_args()
 
         if getattr(namespace, 'func', None):
             self.handler(namespace)
+            return
 
         parser.print_help()
 
     def handler(self, namespace):
         if not self.conf.get('access_key') or not self.conf.get('secret_key'):
-            raise UserError('Missing access or secret key')
+            raise errors.UserError('Missing access or secret key')
 
         self.debug('connecting s3...')
         # os.environ['S3_USE_SIGV4'] = 'True'
@@ -233,7 +252,7 @@ class S3SyncTool(object):
 
         if namespace.set:
             if '=' not in namespace.set:
-                raise UserError('Invalid config option')
+                raise errors.UserError('Invalid config option')
             key, value = namespace.set.split('=', 1)
             config[key.encode('utf8')] = value.encode('utf8')
 
@@ -270,7 +289,7 @@ class S3SyncTool(object):
             recursive=namespace.recursive)
 
         if bucket is False:
-            raise UserError('Missing bucket')
+            raise errors.UserError('Missing bucket')
 
         for index, key in enumerate(bucket):
             if index >= namespace.limit > 0:
@@ -279,6 +298,11 @@ class S3SyncTool(object):
             self._print_key(key)
 
     def on_diff(self, namespace, print_=True):
+        if namespace.all:
+            modes = '=+-<>r'
+        else:
+            modes = namespace.modes
+
         src_files = []
         for file_path in utils.iter_local_path(
                 namespace.path, namespace.recursive):
@@ -289,13 +313,15 @@ class S3SyncTool(object):
                 continue
 
             key = utils.file_key(file_path)
+            if namespace.ignore_case:
+                key = key.lower()
             src_files.append((key, file_path))
 
         self.info('{0} local objects', len(src_files))
 
         bucket = self.bucket()
         if not bucket:
-            raise UserError('missing bucket')
+            raise errors.UserError('missing bucket')
 
         remote_files = dict()
 
@@ -308,7 +334,11 @@ class S3SyncTool(object):
             if not utils.check_file_type(file_.name, namespace.file_types):
                 continue
 
-            remote_files[file_.name] = dict(
+            key = file_.name
+            if namespace.ignore_case:
+                key = key.lower()
+
+            remote_files[key] = dict(
                 key=file_,
                 name=file_.name,
                 size=file_.size,
@@ -316,6 +346,7 @@ class S3SyncTool(object):
                 md5=file_.etag[1:-1],
                 state='-',
                 comment=[],
+                local_path=utils.file_path(file_.name),
             )
 
         self.info('{0} remote objects', len(remote_files.keys()))
@@ -334,11 +365,14 @@ class S3SyncTool(object):
 
                 if stat.st_size != remote['size']:
                     equal = False
-                    remote['comment'].append('size: {0}%'.format(
-                        round(stat.st_size * 100 / float(remote['size']), 2)))
-                elif not namespace.skip_md5:
-                    hash_ = utils.file_hash(f_path)
-                    if hash_ != remote['md5']:
+                    if remote['size']:
+                        diff = stat.st_size * 100 / float(remote['size'])
+                    else:
+                        diff = 0
+                    remote['comment'].append('size: {:.2f}%'.format(diff))
+
+                elif namespace.md5:
+                    if utils.file_hash(f_path) != remote['md5']:
                         equal = False
                         remote['comment'].append('md5: different')
 
@@ -354,30 +388,36 @@ class S3SyncTool(object):
 
                     remote['comment'].append('modified: {0}'.format(
                         local_modified - remote_modified))
-                    if local_modified > remote_modified:
+
+                    if namespace.force_upload:
+                        remote['state'] = '>'
+                    elif namespace.force_download:
+                        remote['state'] = '<'
+                    elif local_modified > remote_modified:
                         remote['state'] = '>'
                     else:
                         remote['state'] = '<'
 
-                if remote['state'] not in namespace.modes:
+                if remote['state'] not in modes:
                     del remote_files[key]
 
             else:
-                if ('+' not in namespace.modes
-                        and 'r' not in namespace.modes):
+                if '+' not in modes and 'r' not in modes:
                     continue
 
                 remote_files[key] = dict(
                     local_size=stat.st_size,
                     local_path=f_path,
                     modified=stat.st_mtime,
-                    md5=utils.file_hash(f_path),
+                    md5=None,
                     state='+',
                     comment=[],
                 )
+                if namespace.md5:
+                    remote_files[key]['md5'] = utils.file_hash(f_path)
 
         # find renames
-        if 'r' in namespace.modes:
+        if 'r' in modes:
             to_del = []
             for key, new_data in six.iteritems(remote_files):
                 if new_data['state'] != '+':
@@ -387,7 +427,7 @@ class S3SyncTool(object):
                         continue
                     if data['size'] != new_data['local_size']:
                         continue
-                    if data['md5'] != new_data['md5']:
+                    if namespace.md5 and data['md5'] != new_data['md5']:
                         continue
                     remote_files[name].update(
                         state='r',
@@ -402,43 +442,56 @@ class S3SyncTool(object):
             for key in to_del:
                 del remote_files[key]
 
-        if '-' not in namespace.modes or '+' not in namespace.modes:
-            for key, value in remote_files.items():
-                if value['state'] not in namespace.modes:
-                    del remote_files[key]
+        remote_files = {
+            k: v for k, v in six.iteritems(remote_files) if v['state'] in modes
+        }
 
-        if print_:
+        if print_ and not namespace.brief:
             keys = remote_files.keys()
             keys.sort()
             for key in keys:
-                self._print_diff_line(key, remote_files[key])
-            self.info('{0} differences', len(remote_files.keys()))
+                data = remote_files[key]
+                print('{} {} {}'.format(
+                    data['state'],
+                    key,
+                    ', '.join(data.get('comment', []))).encode('utf8'))
+
+        if remote_files:
+            counter = collections.Counter()
+            for data in six.itervalues(remote_files):
+                counter.update(data['state'])
+            info = ', '.join(
+                '{}: {}'.format(k, v) for k, v in counter.most_common())
+            self.info('{} differences ({})', len(remote_files), info)
+
+        else:
+            self.info('{} differences', len(remote_files))
 
         return remote_files
 
     def on_remove(self, namespace):
         bucket = self.bucket()
         if not bucket:
-            raise UserError('Missing bucket')
+            raise errors.UserError('Missing bucket')
 
         path = namespace.path.replace('\\', '/')
 
         if path[-1] == '/':
-            raise UserError('Path is dir')
+            raise errors.UserError('Path is dir')
 
         files = bucket.list(delimiter='/', prefix=path)
         files = list(files)
 
         if not files:
-            raise UserError('File not found')
+            raise errors.UserError('File not found')
 
         if len(files) > 1:
-            raise UserError('Multiple files found')
+            raise errors.UserError('Multiple files found')
 
         remote_file = files[0]
 
         if not isinstance(remote_file, boto.s3.key.Key):
-            raise UserError('Try to remove dir')
+            raise errors.UserError('Try to remove dir')
 
         remote_file.delete()
         print('File successful deleted')
@@ -446,35 +499,46 @@ class S3SyncTool(object):
     def on_upload(self, namespace):
         bucket = self.bucket()
         if not bucket:
-            raise UserError('Missing bucket')
+            raise errors.UserError('Missing bucket')
 
-        local_path = utils.file_path(namespace.path)
-        if not os.path.exists(local_path):
-            raise UserError('Local path does not exists')
+        files = {}
+        for local_path in utils.iter_local_path(
+                namespace.path, namespace.recursive):
+            if not os.path.isfile(local_path):
+                continue
 
-        key = utils.file_key(namespace.path)
-        files = bucket.list(delimiter='/', prefix=key)
-        files = list(files)
+            key = utils.file_key(local_path)
+            files[key] = {
+                'local_size': os.stat(local_path).st_size,
+                'local_path': local_path,
+            }
 
-        if files and namespace.force:
-            task = tasks.ReplaceUpload()
-        elif not files:
-            task = tasks.Upload()
-        else:
-            raise UserError('Remote path exists. Use force flag.')
+        for remote in utils.iter_remote_path(
+                bucket, namespace.path, namespace.recursive):
+            if remote.name in files:
+                files[remote.name]['key'] = remote
 
-        stat = os.stat(local_path)
-        data = {
-            'key': boto.s3.key.Key(bucket=bucket, name=key),
-            'local_size': stat.st_size,
-            'local_path': local_path,
-        }
+        conflicts = 0
+        pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT, auto_start=False)
 
-        task(bucket, None, self.conf, key, data, None)
-        if data['comment']:
-            print(data['comment'][0])
-        else:
-            print('File successful uploaded')
+        for key, data in six.iteritems(files):
+            if 'key' in data and namespace.force:
+                task = tasks.ReplaceUpload()
+            elif 'key' not in data:
+                data['key'] = boto.s3.key.Key(bucket=bucket, name=key)
+                task = tasks.Upload()
+            else:
+                conflicts += 1
+                continue
+
+            pool.add_task(task, bucket, self.conf, key, data)
+
+        if conflicts:
+            print('{} remote paths exists, use force flag'.format(conflicts))
+
+        with reprint.output(initial_len=settings.THREAD_MAX_COUNT) as output:
+            pool.start(output)
+            pool.join()
 
     def on_update(self, namespace):
         files = self.on_diff(namespace, print_=False)
@@ -485,13 +549,14 @@ class S3SyncTool(object):
         self.info('processing...')
 
         _t = time.time()
-        processed, _size = 0, 0
+        processed, size = 0, 0
 
         try:
-            processed, _size = self._update(files, namespace)
+            processed, size = self._update(files, namespace)
         finally:
-            if _t:
-                speed = utils.humanize_size(_size / _t)
+            delta = time.time() - _t
+            if delta:
+                speed = utils.humanize_size(size / delta)
                 self.info('average speed: %s', speed)
 
             self.info(
@@ -501,24 +566,22 @@ class S3SyncTool(object):
 
     def _update(self, files, namespace):
         processed = 0
-        _size = 0
+        size = 0
 
+        bucket = self.bucket()
         pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT)
-        output_manager = reprint.output(
-            output_type="list",
-            initial_len=settings.THREAD_MAX_COUNT,
-            interval=0)
-        output = output_manager.__enter__()
 
         for name, data in six.iteritems(files):
+            action = None
+
             if data['state'] == '=':
                 processed += 1
                 continue
 
             elif data['state'] == '+':
-                if namespace.confirm_upload:
+                if namespace.upload:
                     action = tasks.Upload()
-                elif namespace.confirm_delete_local:
+                elif namespace.delete_local:
                     action = tasks.DeleteLocal()
                 elif namespace.quiet:
                     continue
@@ -532,9 +595,9 @@ class S3SyncTool(object):
                         action = act
 
             elif data['state'] == '-':
-                if namespace.confirm_download:
+                if namespace.download:
                     action = tasks.Download()
-                elif namespace.confirm_delete_remote:
+                elif namespace.delete_remote:
                     action = tasks.DeleteRemote()
                 elif namespace.quiet:
                     continue
@@ -550,16 +613,15 @@ class S3SyncTool(object):
             elif data['state'] == 'r':
                 if self._check(
                         name, data, namespace.quiet,
-                        namespace.confirm_rename_remote):
+                        namespace.rename_remote):
                     action = tasks.RenameRemote()
                 else:
                     continue
 
-            elif data['state'] == '>' or namespace.force_upload:
-                data['state'] = '>'
+            elif data['state'] == '>':
                 if self._check(
                         name, data, namespace.quiet,
-                        namespace.confirm_replace_upload):
+                        namespace.replace_upload):
                     action = tasks.ReplaceUpload()
                 else:
                     continue
@@ -567,27 +629,31 @@ class S3SyncTool(object):
             elif data['state'] == '<':
                 if self._check(
                         name, data, namespace.quiet,
-                        namespace.confirm_replace_download):
+                        namespace.replace_download):
                     action = tasks.Download()
                 else:
                     continue
 
-            _size += data.get('local_size', 0)
+            if not action:
+                logging.error('Unknown action')
+                continue
+            pool.add_task(action, bucket, self.conf, name, data)
+            processed += 1
 
-            pool.add_task(
-                action,
-                self.bucket(),
-                None,
-                self.conf,
-                name,
-                data,
-                output,
-            )
+            if isinstance(action, tasks.Download):
+                size += data.get('size') or 0
+            elif isinstance(action, (tasks.Upload, tasks.ReplaceUpload)):
+                size += data.get('local_size') or 0
 
-        pool.join()
-        output_manager.__exit__(None, None, None)
+            if processed >= namespace.limit > 0:
+                self.info('list limit reached!')
+                break
 
-        return processed, _size
+        with reprint.output(initial_len=settings.THREAD_MAX_COUNT) as output:
+            pool.start(output)
+            pool.join()
+
+        return processed, size
 
     def _check(self, name, data, quiet, confirm):
         if confirm:
@@ -656,15 +722,7 @@ class S3SyncTool(object):
             }
 
         pattern = self.conf.get('key_pattern') or settings.KEY_PATTERN
-        self.info(pattern.format(**params))
-
-    def _print_diff_line(self, name, data):
-        self.info(
-            '{0} {1} {2}',
-            data['state'],
-            name,
-            ', '.join(data.get('comment', []))
-        )
+        print(pattern.format(**params))
 
 
 def main():
@@ -675,7 +733,7 @@ def main():
 
     try:
         tool.run_cli()
-    except UserError as exc:
+    except errors.UserError as exc:
         tool.error(exc.args[0])
     except KeyboardInterrupt:
         tool.error('interrupted')
