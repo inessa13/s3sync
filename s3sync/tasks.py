@@ -69,6 +69,7 @@ class System(threading.Thread):
         self.tasks_total = tasks_total
         self.tasks_processed = 0
         self.size = 0
+
         self._t = time.time()
 
     def run(self):
@@ -144,6 +145,7 @@ class Task(object):
         self.name = None
         self.data = None
         self.worker = None
+        self._t = None
 
     def handler(self):
         raise NotImplementedError()
@@ -167,7 +169,7 @@ class Task(object):
 
         return {'size': size}
 
-    def size(self):
+    def size(self):  # pylint: disable=no-self-use
         return 0
 
     def progress(self, uploaded, full):

@@ -67,9 +67,8 @@ class S3SyncTool(object):
 
     def run_cli(self):
         parser = argparse.ArgumentParser()
-        argcomplete.autocomplete(parser)
 
-        subparsers = parser.add_subparsers()
+        subparsers = parser.add_subparsers(title='list of commands')
 
         cmd = subparsers.add_parser('config', help='show/edit config')
         cmd.set_defaults(func=self.on_config)
@@ -101,7 +100,10 @@ class S3SyncTool(object):
             '-l', '--limit',
             action='store', default=10, type=int, help='output limit')
 
-        cmd = subparsers.add_parser('diff', help='diff local and remote')
+        cmd = subparsers.add_parser(
+            'diff',
+            formatter_class=utils.Formatter,
+            help='diff local and remote')
         cmd.set_defaults(func=self.on_diff)
         diff_arguments(cmd)
 
@@ -117,37 +119,45 @@ class S3SyncTool(object):
         cmd.add_argument(
             '-r', '--recursive', action='store_true', help='list recursive')
 
-        cmd = subparsers.add_parser('update', help='update local or remote')
+        cmd = subparsers.add_parser(
+            'update',
+            formatter_class=utils.Formatter,
+            help='update local or remote')
         cmd.set_defaults(func=self.on_update)
         diff_arguments(cmd)
         cmd.add_argument(
             '-q', '--quiet',
             action='store_true', help='quiet (no interactive)')
         cmd.add_argument(
-            '-U', '--confirm-upload',
+            '-U', '--upload',
             action='store_true', help='confirm upload action')
         cmd.add_argument(
-            '-D', '--confirm-download',
+            '-D', '--download',
             action='store_true', help='confirm download action')
         cmd.add_argument(
-            '-R', '--confirm-rename-remote',
+            '-R', '--rename-remote',
             action='store_true', help='confirm rename remote file')
         cmd.add_argument(
-            '--confirm-replace-upload',
+            '--replace-upload',
             action='store_true', help='confirm replace on upload')
         cmd.add_argument(
-            '--confirm-replace-download',
+            '--replace-download',
             action='store_true', help='confirm replace on download')
         cmd.add_argument(
-            '--confirm-delete-local',
+            '--delete-local',
             action='store_true', help='confirm delete local file')
         cmd.add_argument(
-            '--confirm-delete-remote',
+            '--delete-remote',
             action='store_true', help='confirm delete remote file')
         cmd.add_argument(
             '-l', '--limit',
-            action='store', default=0, type=int, help='process limit')
+            action='store',
+            default=0,
+            metavar='L',
+            type=int,
+            help='process limit')
 
+        argcomplete.autocomplete(parser)
         namespace = parser.parse_args()
 
         if getattr(namespace, 'func', None):
@@ -372,7 +382,7 @@ class S3SyncTool(object):
                         continue
                     if data['size'] != new_data['local_size']:
                         continue
-                    if namespace.md5 and data['md5'] and data['md5'] != new_data['md5']:
+                    if namespace.md5 and data['md5'] != new_data['md5']:
                         continue
                     remote_files[name].update(
                         state='r',
@@ -395,7 +405,11 @@ class S3SyncTool(object):
             keys = remote_files.keys()
             keys.sort()
             for key in keys:
-                self._print_diff_line(key, remote_files[key])
+                data = remote_files[key]
+                print('{} {} {}'.format(
+                    data['state'],
+                    key,
+                    ', '.join(data.get('comment', []))).encode('utf8'))
 
         if remote_files:
             counter = collections.Counter()
@@ -520,9 +534,9 @@ class S3SyncTool(object):
                 continue
 
             elif data['state'] == '+':
-                if namespace.confirm_upload:
+                if namespace.upload:
                     action = tasks.Upload()
-                elif namespace.confirm_delete_local:
+                elif namespace.delete_local:
                     action = tasks.DeleteLocal()
                 elif namespace.quiet:
                     continue
@@ -536,9 +550,9 @@ class S3SyncTool(object):
                         action = act
 
             elif data['state'] == '-':
-                if namespace.confirm_download:
+                if namespace.download:
                     action = tasks.Download()
-                elif namespace.confirm_delete_remote:
+                elif namespace.delete_remote:
                     action = tasks.DeleteRemote()
                 elif namespace.quiet:
                     continue
@@ -554,7 +568,7 @@ class S3SyncTool(object):
             elif data['state'] == 'r':
                 if self._check(
                         name, data, namespace.quiet,
-                        namespace.confirm_rename_remote):
+                        namespace.rename_remote):
                     action = tasks.RenameRemote()
                 else:
                     continue
@@ -562,7 +576,7 @@ class S3SyncTool(object):
             elif data['state'] == '>':
                 if self._check(
                         name, data, namespace.quiet,
-                        namespace.confirm_replace_upload):
+                        namespace.replace_upload):
                     action = tasks.ReplaceUpload()
                 else:
                     continue
@@ -570,7 +584,7 @@ class S3SyncTool(object):
             elif data['state'] == '<':
                 if self._check(
                         name, data, namespace.quiet,
-                        namespace.confirm_replace_download):
+                        namespace.replace_download):
                     action = tasks.Download()
                 else:
                     continue
@@ -665,10 +679,6 @@ class S3SyncTool(object):
         pattern = self.conf.get('key_pattern') or settings.KEY_PATTERN
         print(pattern.format(**params))
 
-    def _print_diff_line(self, name, data):
-        print('{} {} {}'.format(
-            data['state'], name, ', '.join(data.get('comment', []))).encode('utf8'))
-
 
 def diff_arguments(cmd):
     cmd.add_argument(
@@ -703,6 +713,7 @@ def diff_arguments(cmd):
     cmd.add_argument(
         '-f', '--file-types',
         action='store',
+        metavar='TYPES',
         help='file types (extension) for compare')
 
 

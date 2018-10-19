@@ -1,3 +1,6 @@
+from __future__ import absolute_import, print_function, unicode_literals
+
+import argparse
 import hashlib
 import os
 import re
@@ -181,17 +184,47 @@ def get_cwd():
 
 
 class Timeit(object):
+    def __init__(self, func=None):
+        self.func = func
+        self._t = None
+
     def __enter__(self):
         self._t = time.time()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         print('{:.2f}'.format(time.time() - self._t))
 
-    def __init__(self, func=None):
-        self.func = func
-
     def __call__(self, *args, **kwargs):
         _t = time.time()
         self.func(*args, **kwargs)
         print('{} {:.2f}'.format(
             self.func.__name__, time.time() - _t))
+
+
+class Formatter(argparse.HelpFormatter):
+    def __init__(
+            self, prog, indent_increment=2, max_help_position=30, width=None):
+        super(Formatter, self).__init__(
+            prog, indent_increment, max_help_position, width)
+
+    def _format_action_invocation(self, action):
+        if not action.option_strings:
+            metavar, = self._metavar_formatter(action, action.dest)(1)
+            return metavar
+
+        parts = []
+        # if the Optional doesn't take a value, format is:
+        #    -s, --long
+        if action.nargs == 0:
+            parts.extend(action.option_strings)
+
+        # if the Optional takes a value, format is:
+        #    -s, --long ARGS
+        else:
+            default = action.dest.upper()
+            args_string = self._format_args(action, default)
+            for option_string in action.option_strings:
+                parts.append(option_string)
+            parts[-1] += ' %s' % args_string
+
+        return ', '.join(parts)
