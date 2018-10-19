@@ -17,7 +17,7 @@ import reprint
 import six
 import yaml
 
-from . import settings, tasks, utils, errors
+from . import __version__, errors, settings, tasks, utils
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,10 @@ class S3SyncTool(object):
     def run_cli(self):
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            '--version', action='store_true', help='show version and exit')
+            '-V', '--version',
+            action='version',
+            version='%(prog)s ' + __version__,
+            help='show version and exit')
 
         subparsers = parser.add_subparsers(title='list of commands')
 
@@ -90,7 +93,10 @@ class S3SyncTool(object):
         cmd = subparsers.add_parser('buckets', help='list buckets')
         cmd.set_defaults(func=self.on_list_buckets)
 
-        cmd = subparsers.add_parser('list', help='list files')
+        cmd = subparsers.add_parser(
+            'list',
+            formatter_class=utils.Formatter,
+            help='list files')
         cmd.set_defaults(func=self.on_list)
         cmd.add_argument(
             '-b', '--bucket', action='store', help='bucket')

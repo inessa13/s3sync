@@ -4,7 +4,7 @@ from setuptools import setup
 import s3sync as project
 
 CLASSIFIERS = [
-    'Development Status :: 4 - Beta',
+    'Development Status :: 5 - Production/Stable',
     'Environment :: Console',
     'Intended Audience :: Developers',
     'Operating System :: POSIX',
