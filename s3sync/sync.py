@@ -67,6 +67,8 @@ class S3SyncTool(object):
 
     def run_cli(self):
         parser = argparse.ArgumentParser()
+        parser.add_argument(
+            '--version', action='store_true', help='show version and exit')
 
         subparsers = parser.add_subparsers(title='list of commands')
 
@@ -80,6 +82,7 @@ class S3SyncTool(object):
             '--set', action='store', help='set config data')
 
         cmd = subparsers.add_parser('init', help='init project')
+
         cmd.set_defaults(func=self.on_init)
         cmd.add_argument(
             'bucket', action='store', help='bucket for sync')
@@ -100,12 +103,48 @@ class S3SyncTool(object):
             '-l', '--limit',
             action='store', default=10, type=int, help='output limit')
 
+        common_diff = argparse.ArgumentParser(add_help=False)
+        common_diff.add_argument(
+            '-a', '--all',
+            action='store_true', help='use all modes. ignores -m')
+        common_diff.add_argument(
+            '-b', '--brief', action='store_true', help='brief diff')
+        common_diff.add_argument(
+            '-i', '--ignore-case',
+            action='store_true', help='ignore file path case')
+        common_diff.add_argument(
+            '-r', '--recursive', action='store_true', help='list recursive')
+        common_diff.add_argument(
+            '-5', '--md5', action='store_true', help='compare file content')
+
+        common_diff.add_argument(
+            '--force-upload',
+            action='store_true',
+            help='data transfer direction force change to upload')
+        common_diff.add_argument(
+            '--force-download',
+            action='store_true',
+            help='data transfer direction force change to download')
+
+        common_diff.add_argument(
+            '-p', '--path',
+            action='store', default='', help='path to compare')
+        common_diff.add_argument(
+            '-m', '--modes',
+            action='store', default='-<>+r',
+            help='modes of comparing (by default: -<>+r)')
+        common_diff.add_argument(
+            '-f', '--file-types',
+            action='store',
+            metavar='TYPES',
+            help='file types (extension) for compare')
+
         cmd = subparsers.add_parser(
             'diff',
+            parents=[common_diff],
             formatter_class=utils.Formatter,
             help='diff local and remote')
         cmd.set_defaults(func=self.on_diff)
-        diff_arguments(cmd)
 
         cmd = subparsers.add_parser('rm', help='remove remote file')
         cmd.set_defaults(func=self.on_remove)
@@ -121,10 +160,17 @@ class S3SyncTool(object):
 
         cmd = subparsers.add_parser(
             'update',
+            parents=[common_diff],
             formatter_class=utils.Formatter,
             help='update local or remote')
         cmd.set_defaults(func=self.on_update)
-        diff_arguments(cmd)
+        cmd.add_argument(
+            '-l', '--limit',
+            action='store',
+            default=0,
+            metavar='L',
+            type=int,
+            help='process limit')
         cmd.add_argument(
             '-q', '--quiet',
             action='store_true', help='quiet (no interactive)')
@@ -149,13 +195,6 @@ class S3SyncTool(object):
         cmd.add_argument(
             '--delete-remote',
             action='store_true', help='confirm delete remote file')
-        cmd.add_argument(
-            '-l', '--limit',
-            action='store',
-            default=0,
-            metavar='L',
-            type=int,
-            help='process limit')
 
         argcomplete.autocomplete(parser)
         namespace = parser.parse_args()
@@ -678,43 +717,6 @@ class S3SyncTool(object):
 
         pattern = self.conf.get('key_pattern') or settings.KEY_PATTERN
         print(pattern.format(**params))
-
-
-def diff_arguments(cmd):
-    cmd.add_argument(
-        '-a', '--all',
-        action='store_true', help='use all modes. ignores -m')
-    cmd.add_argument(
-        '-b', '--brief', action='store_true', help='brief diff')
-    cmd.add_argument(
-        '-i', '--ignore-case',
-        action='store_true', help='ignore file path case')
-    cmd.add_argument(
-        '-r', '--recursive', action='store_true', help='list recursive')
-    cmd.add_argument(
-        '-5', '--md5', action='store_true', help='compare file content')
-
-    cmd.add_argument(
-        '--force-upload',
-        action='store_true',
-        help='data transfer direction force change to upload')
-    cmd.add_argument(
-        '--force-download',
-        action='store_true',
-        help='data transfer direction force change to download')
-
-    cmd.add_argument(
-        '-p', '--path',
-        action='store', default='', help='path to compare')
-    cmd.add_argument(
-        '-m', '--modes',
-        action='store', default='-<>+r',
-        help='modes of comparing (by default: -<>+r)')
-    cmd.add_argument(
-        '-f', '--file-types',
-        action='store',
-        metavar='TYPES',
-        help='file types (extension) for compare')
 
 
 def main():
