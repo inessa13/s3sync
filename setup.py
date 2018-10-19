@@ -23,11 +23,17 @@ setup(
     url='https://bitbucket.org/davo/s3sync/',
     platforms=CLASSIFIERS,
     install_requires=[
+        'argcomplete',
         'boto',
+        'reprint',
     ],
     entry_points={'console_scripts': [
         's3sync = s3sync.sync:main',
     ]},
+    data_files=[
+        ('/usr/share/bash-completion/completions/', [
+            'extras/completion/s3sync'])
+    ],
     packages=['s3sync'],
     include_package_data=False,
     zip_safe=False,

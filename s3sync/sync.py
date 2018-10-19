@@ -9,6 +9,7 @@ import logging.config
 import os
 import time
 
+import argcomplete
 import boto.s3
 import boto.s3.connection
 import boto.s3.key
@@ -66,6 +67,7 @@ class S3SyncTool(object):
 
     def run_cli(self):
         parser = argparse.ArgumentParser()
+        argcomplete.autocomplete(parser)
 
         subparsers = parser.add_subparsers()
 
