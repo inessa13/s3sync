@@ -216,7 +216,7 @@ class Task(object):
         output.append(line)
 
 
-def _upload(key, callback, local_path, replace=False):
+def _upload(key, callback, local_path, replace=False, rrs=False):
     local_file_path = utils.file_path(local_path)
 
     with open(local_file_path, 'rb') as local_file:
@@ -225,7 +225,7 @@ def _upload(key, callback, local_path, replace=False):
             replace=replace,
             cb=callback,
             num_cb=settings.UPLOAD_CB_NUM,
-            reduced_redundancy=True,
+            reduced_redundancy=rrs,
             rewind=True,
         )
 
@@ -244,6 +244,7 @@ class Upload(Task):
             boto.s3.key.Key(bucket=self.bucket, name=self.name),
             self.progress,
             self.data['local_path'],
+            rrs=self.conf['reduced_redundancy'],
         )
         self.data['comment'] = ['uploaded']
 
@@ -288,8 +289,11 @@ class RenameRemote(Task):
         new_key = self.data['key'].copy(
             self.conf['bucket'], self.data['local_name'],
             metadata=None,
-            reduced_redundancy=True, preserve_acl=True,
-            encrypt_key=False, validate_dst_bucket=True)
+            reduced_redundancy=self.conf['reduced_redundancy'],
+            preserve_acl=True,
+            encrypt_key=False,
+            validate_dst_bucket=True,
+        )
 
         if new_key:
             self.data['key'].delete()

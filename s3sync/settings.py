@@ -16,6 +16,7 @@ THREAD_MAX_COUNT = 16
 ENDED_OUTPUT_MAX_COUNT = 16
 UPLOAD_CB_NUM = 10
 UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent:3.0f}% {speed} {info}'
+REDUCED_REDUNDANCY = False
 
 LOGGING = {
     'version': 1,
@@ -52,7 +53,8 @@ LOGGING = {
 }
 
 STORAGE_ALIASES = {
-    'GLACIER': 'G',
-    'STANDARD': 'S',
-    'REDUCED_REDUNDANCY': 'R',
+    'GLACIER': '  G',
+    'STANDARD': '  S',
+    'STANDARD_IA': 'SIA',
+    'REDUCED_REDUNDANCY': 'RRS',
 }

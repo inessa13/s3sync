@@ -693,13 +693,12 @@ class S3SyncTool(object):
         return values_map[input_data[0]]
 
     def _print_key(self, key):
-        name_len = self.conf.get(
-            'key_pattern_name_len') or settings.KEY_PATTERN_NAME_LEN
+        name_len = self.conf['key_pattern_name_len']
 
         if len(key.name) < name_len:
             name = key.name.ljust(name_len, ' ')
         else:
-            name = key.name[:self.conf['key_pat_name_len'] - 3] + '...'
+            name = key.name[:name_len - 3] + '...'
 
         if isinstance(key, boto.s3.key.Key):
             params = {
