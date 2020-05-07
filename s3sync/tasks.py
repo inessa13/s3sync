@@ -302,6 +302,20 @@ class RenameRemote(Task):
             raise Exception('s3 key copy failed')
 
 
+class RenameLocal(Task):
+    done = 'renamed (local)'
+
+    def __str__(self):
+        return 'rename_local'
+
+    def handler(self):
+        os.rename(
+            os.path.join(self.conf['project_root'], self.data['local_name']),
+            os.path.join(self.conf['project_root'], self.data['key'].name),
+        )
+        self.data['comment'] = ['renamed']
+
+
 class Download(Task):
     done = 'downloaded'
 

@@ -190,6 +190,9 @@ class S3SyncTool(object):
             '-R', '--rename-remote',
             action='store_true', help='confirm rename remote file')
         cmd.add_argument(
+            '-L', '--rename-local',
+            action='store_true', help='confirm rename local file')
+        cmd.add_argument(
             '--replace-upload',
             action='store_true', help='confirm replace on upload')
         cmd.add_argument(
@@ -615,6 +618,10 @@ class S3SyncTool(object):
                         name, data, namespace.quiet,
                         namespace.rename_remote):
                     action = tasks.RenameRemote()
+                elif self._check(
+                        name, data, namespace.quiet,
+                        namespace.rename_local):
+                    action = tasks.RenameLocal()
                 else:
                     continue
 
