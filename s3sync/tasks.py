@@ -309,9 +309,21 @@ class RenameLocal(Task):
         return 'rename_local'
 
     def handler(self):
+        dest_name = os.path.join(
+            self.conf['project_root'], self.data['key'].name)
+
+        dest_dir = os.path.dirname(dest_name)
+        # TODO: add lock
+        if not os.path.exists(dest_dir):
+            try:
+                os.makedirs(dest_dir)
+            except OSError as exc:
+                self.data['comment'] = ['failed: {}'.format(exc)]
+                return
+
         os.rename(
             os.path.join(self.conf['project_root'], self.data['local_name']),
-            os.path.join(self.conf['project_root'], self.data['key'].name),
+            dest_name,
         )
         self.data['comment'] = ['renamed']
 
@@ -326,7 +338,7 @@ class Download(Task):
         return self.data.get('size') or 0
 
     def handler(self):
-        file_path = utils.file_path(self.data['local_path'])
+        file_path = self.data['local_path']
 
         # ensure path
         file_dir = os.path.dirname(file_path)

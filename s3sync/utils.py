@@ -45,7 +45,12 @@ def file_path_info(path):
         path = os.path.join(project_root, path).replace('\\', '/')
 
     else:
-        path = os.path.join(current_root, path).replace('\\', '/')
+        if current_root.startswith(project_root):
+            current_root = current_root[len(project_root):].lstrip('\\/')
+            if not path.startswith(current_root):
+                path = os.path.join(current_root, path).replace('\\', '/')
+            path = os.path.join(project_root, path)
+
         key = re.sub(
             '^{}/'.format(project_root.replace('\\', '/')), '', path)
 
