@@ -1,6 +1,4 @@
-# -*- coding: utf-8 -*-
-from __future__ import absolute_import, print_function, unicode_literals
-
+# PYTHON_ARGCOMPLETE_OK
 import argparse
 import collections
 import datetime
@@ -14,7 +12,6 @@ import boto.s3
 import boto.s3.connection
 import boto.s3.key
 import reprint
-import six
 import yaml
 
 from . import __version__, errors, settings, tasks, utils
@@ -22,7 +19,7 @@ from . import __version__, errors, settings, tasks, utils
 logger = logging.getLogger(__name__)
 
 
-class S3SyncTool(object):
+class S3SyncTool:
     def __init__(self):
         self.conn = None
         self.confirm_permanent = {}
@@ -43,7 +40,7 @@ class S3SyncTool(object):
             return None
 
         with open(path, 'r') as config_file:
-            loaded = yaml.load(config_file)
+            loaded = yaml.safe_load(config_file)
             if update:
                 self.conf.update(loaded)
             return loaded
@@ -257,7 +254,7 @@ class S3SyncTool(object):
             if '=' not in namespace.set:
                 raise errors.UserError('Invalid config option')
             key, value = namespace.set.split('=', 1)
-            config[key.encode('utf8')] = value.encode('utf8')
+            config[key] = value
 
         elif config:
             print(config)
@@ -277,7 +274,7 @@ class S3SyncTool(object):
     def on_init(cls, namespace):
         config_path = os.path.join(os.getcwd(), settings.CONFIG_LOCAL_NAME)
         with open(config_path, 'w') as config_file:
-            config = {'bucket'.encode('utf8'): namespace.bucket.encode('utf8')}
+            config = {'bucket': namespace.bucket}
             yaml.dump(config, config_file, default_flow_style=False)
 
     def on_list_buckets(self, namespace):  # pylint: disable=unused-argument
@@ -422,10 +419,10 @@ class S3SyncTool(object):
         # find renames
         if 'r' in modes:
             to_del = []
-            for key, new_data in six.iteritems(remote_files):
+            for key, new_data in remote_files.items():
                 if new_data['state'] != '+':
                     continue
-                for name, data in six.iteritems(remote_files):
+                for name, data in remote_files.items():
                     if data['state'] != '-':
                         continue
                     if data['size'] != new_data['local_size']:
@@ -446,22 +443,21 @@ class S3SyncTool(object):
                 del remote_files[key]
 
         remote_files = {
-            k: v for k, v in six.iteritems(remote_files) if v['state'] in modes
+            k: v for k, v in remote_files.items() if v['state'] in modes
         }
 
         if print_ and not namespace.brief:
             keys = remote_files.keys()
-            keys.sort()
             for key in keys:
                 data = remote_files[key]
                 print('{} {} {}'.format(
                     data['state'],
                     key,
-                    ', '.join(data.get('comment', []))).encode('utf8'))
+                    ', '.join(data.get('comment', []))))
 
         if remote_files:
             counter = collections.Counter()
-            for data in six.itervalues(remote_files):
+            for data in remote_files.values():
                 counter.update(data['state'])
             info = ', '.join(
                 '{}: {}'.format(k, v) for k, v in counter.most_common())
@@ -524,7 +520,7 @@ class S3SyncTool(object):
         conflicts = 0
         pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT, auto_start=False)
 
-        for key, data in six.iteritems(files):
+        for key, data in files.items():
             if 'key' in data and namespace.force:
                 task = tasks.ReplaceUpload()
             elif 'key' not in data:
@@ -574,7 +570,7 @@ class S3SyncTool(object):
         bucket = self.bucket()
         pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT)
 
-        for name, data in six.iteritems(files):
+        for name, data in files.items():
             action = None
 
             if data['state'] == '=':
@@ -677,8 +673,7 @@ class S3SyncTool(object):
         if code in self.confirm_permanent:
             return self.confirm_permanent[code]
 
-        values_map = collections.OrderedDict(
-            (str(value), value) for value in values)
+        values_map = {str(value): value for value in values}
 
         if 'n' not in values_map:
             values_map['n'] = 'n'
@@ -686,16 +681,16 @@ class S3SyncTool(object):
         prompt_str = '{} {} {} ({} [all])? '.format(
             code, name,
             ', '.join(data.get('comment', [])),
-            '/'.join(six.iterkeys(values_map)),
+            '/'.join(values_map.keys()),
         )
 
         input_data = []
         while not input_data or input_data[0] not in values_map:
-            input_data = six.moves.input(prompt_str.encode('utf8'))
+            input_data = input(prompt_str)
             input_data = input_data.split(' ', 1)
 
         if len(input_data) > 1 and input_data[1] == 'all':
-            self.confirm_permanent[code] = input_data[0]
+            self.confirm_permanent[code] = values_map[input_data[0]]
 
         return values_map[input_data[0]]
 
@@ -710,7 +705,7 @@ class S3SyncTool(object):
         if isinstance(key, boto.s3.key.Key):
             params = {
                 'name': name,
-                'size': str(key.size).ljust(10, ' '.encode('ascii')),
+                'size': str(key.size).ljust(10, ' '),
                 'owner': key.owner.display_name,
                 'modified': key.last_modified,
                 'storage': settings.STORAGE_ALIASES.get(

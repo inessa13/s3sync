@@ -1,7 +1,5 @@
 #!/usr/bin/env python
-# -*- encoding: utf-8 -*-
 from setuptools import setup
-import s3sync as project
 
 CLASSIFIERS = [
     'Development Status :: 5 - Production/Stable',
@@ -9,7 +7,7 @@ CLASSIFIERS = [
     'Intended Audience :: Developers',
     'Operating System :: POSIX',
     'Programming Language :: Python',
-    'Programming Language :: Python :: 2.7',
+    'Programming Language :: Python :: 3',
     'Topic :: Software Development',
     'Topic :: Utilities',
 ]
@@ -19,13 +17,14 @@ setup(
     author_email='davo.fastcall@gmail.com',
     name='s3sync',
     description='S3 sync tool',
-    version=project.__version__,
+    version='0.1.0',
     url='https://bitbucket.org/davo/s3sync/',
     platforms=CLASSIFIERS,
     install_requires=[
         'argcomplete',
         'boto',
         'reprint',
+        'pyyaml',
     ],
     entry_points={'console_scripts': [
         's3sync = s3sync.sync:main',
@@ -38,5 +37,5 @@ setup(
     include_package_data=False,
     zip_safe=False,
     test_suite='tests',
-    python_requires='~=2.7',
+    python_requires='~=3.0',
 )
