@@ -1,13 +1,8 @@
-# -*- coding: utf-8 -*-
-from __future__ import absolute_import, print_function, unicode_literals
-
 import argparse
 import hashlib
 import os
 import re
 import time
-
-import six
 
 from . import errors, settings
 
@@ -53,14 +48,6 @@ def file_path_info(path):
 
         key = re.sub(
             '^{}/'.format(project_root.replace('\\', '/')), '', path)
-
-    try:
-        key = key.decode('utf8')
-    except UnicodeEncodeError:
-        try:
-            key = key.decode('cp1251')
-        except UnicodeEncodeError:
-            key = key
 
     # TODO: fix for windows
     path = '/' + os.path.join(*path.split('/'))
@@ -158,7 +145,7 @@ def memoize(func):
             memo_key += ','.join(map(str, args))
         if kwargs:
             memo_key += ','.join(
-                '{}:{}'.format(k, v) for k, v in six.iteritems(kwargs))
+                '{}:{}'.format(k, v) for k, v in kwargs.items())
 
         if memo_key not in memo:
             memo[memo_key] = func(*args, **kwargs)
@@ -189,7 +176,7 @@ def get_cwd():
     return os.getcwd()
 
 
-class Timeit(object):
+class Timeit:
     def __init__(self, func=None):
         self.func = func
         self._t = None

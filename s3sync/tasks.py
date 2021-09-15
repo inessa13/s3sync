@@ -1,38 +1,21 @@
-# -*- coding: utf-8 -*-
-from __future__ import absolute_import, print_function, unicode_literals
-
 import logging.config
 import os
+import queue
 import threading
 import time
 
 import boto.s3.key
-import six
 
 from . import settings, utils
 
 logger = logging.getLogger(__name__)
 
 
-class QueueEx(six.moves.queue.Queue):
-    def join_with_timeout(self, timeout):
-        self.all_tasks_done.acquire()
-        try:
-            end_time = time.time() + timeout
-            while self.unfinished_tasks:
-                remaining = end_time - time.time()
-                if remaining <= 0.0:
-                    raise RuntimeError('not finished')
-                self.all_tasks_done.wait(remaining)
-        finally:
-            self.all_tasks_done.release()
-
-
 class Worker(threading.Thread):
     """ Thread executing tasks from a given tasks queue """
 
     def __init__(self, index, task_queue, result_queue, output=None):
-        super(Worker, self).__init__().__init__()
+        super(Worker, self).__init__()
         self.index = index
         self.task_queue = task_queue
         self.result_queue = result_queue
@@ -41,8 +24,8 @@ class Worker(threading.Thread):
         self.output = output
 
     def run(self):
-        while True:
-            func, args = self.task_queue.get()
+        while self.task_queue.unfinished_tasks:
+            func, args = self.task_queue.get(timeout=10)
             try:
                 result = func(*args, worker=self)
                 if self.result_queue:
@@ -86,7 +69,7 @@ class System(threading.Thread):
 
         len_full = 40
         progress = float(self.tasks_processed) / self.tasks_total * 100
-        progress_len = int(progress) * len_full / 100
+        progress_len = int(progress) * len_full // 100
 
         delta = time.time() - self._t
         if delta:
@@ -103,11 +86,11 @@ class System(threading.Thread):
         )
 
 
-class ThreadPool(object):
+class ThreadPool:
     def __init__(self, num_threads, auto_start=False):
         self.num_threads = num_threads
-        self.result_queue = six.moves.queue.Queue()
-        self.task_queue = QueueEx()
+        self.result_queue = queue.Queue()
+        self.task_queue = queue.Queue()
         self.sys = None
         self.tasks_total = 0
 
@@ -119,7 +102,7 @@ class ThreadPool(object):
             self.sys = System(0, self.result_queue, output, self.tasks_total)
             self.sys.start()
 
-        for index in six.moves.range(1, self.num_threads):
+        for index in range(1, self.num_threads):
             worker = Worker(index, self.task_queue, self.result_queue, output)
             worker.start()
 
@@ -129,14 +112,16 @@ class ThreadPool(object):
         self.task_queue.put((task, args))
 
     def join(self):
-        # self.task_queue.join_with_timeout(10)
+        while self.task_queue.unfinished_tasks:
+            time.sleep(0.1)
+
         self.task_queue.join()
 
         if self.sys is not None:
             self.sys.join(timeout=1)
 
 
-class Task(object):
+class Task:
     done = 'finished'
 
     def __init__(self):
@@ -175,7 +160,7 @@ class Task(object):
     def progress(self, uploaded, full):
         len_full = 40
         progress = round(float(uploaded) / full, 2) * 100
-        progress_len = int(progress) * len_full / 100
+        progress_len = int(progress) * len_full // 100
 
         size = self.size()
         if size:
@@ -190,7 +175,7 @@ class Task(object):
             left=' ' * (len_full - progress_len),
             progress_percent=progress,
             speed=speed,
-            info='{:s} {}'.format(self, self.name)
+            info='{} {}'.format(self, self.name)
         )
         self.output_edit(line)
 
@@ -207,13 +192,12 @@ class Task(object):
             return
 
         output = self.worker.output
-        with output.lock:
-            prefix = settings.THREAD_MAX_COUNT
-            total = prefix + settings.ENDED_OUTPUT_MAX_COUNT
-            if len(output) >= total:
-                output[prefix:total] = output[prefix + 1:total]
-
-        output.append(line)
+        prefix = settings.THREAD_MAX_COUNT
+        total = prefix + settings.ENDED_OUTPUT_MAX_COUNT
+        if len(output) >= total:
+            output[prefix:total] = output[prefix + 1:total] + [line]
+        else:
+            output.append(line)
 
 
 def _upload(key, callback, local_path, replace=False, rrs=False):
