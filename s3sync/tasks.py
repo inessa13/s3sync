@@ -25,7 +25,11 @@ class Worker(threading.Thread):
 
     def run(self):
         while self.task_queue.unfinished_tasks:
-            func, args = self.task_queue.get(timeout=10)
+            try:
+                func, args = self.task_queue.get(timeout=10)
+            except queue.Empty:
+                break
+
             try:
                 result = func(*args, worker=self)
                 if self.result_queue:
