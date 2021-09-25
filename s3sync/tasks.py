@@ -6,7 +6,7 @@ import time
 
 import boto.s3.key
 
-from . import settings, utils
+from . import utils
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +45,14 @@ class Worker(threading.Thread):
 
 
 class System(threading.Thread):
-    def __init__(self, index, result_queue, output, tasks_total):
+    def __init__(self, index, result_queue, output, tasks_total, conf):
         super(System, self).__init__()
         self.daemon = True
 
         self.index = index
         self.queue = result_queue
         self.output = output
+        self.conf = conf
 
         self.tasks_total = tasks_total
         self.tasks_processed = 0
@@ -81,7 +82,7 @@ class System(threading.Thread):
         else:
             speed = 'n\\a'
 
-        self.output[self.index] = settings.UPLOAD_FORMAT.format(
+        self.output[self.index] = self.conf['UPLOAD_FORMAT'].format(
             progress='=' * progress_len,
             left=' ' * (len_full - progress_len),
             progress_percent=progress,
@@ -91,19 +92,21 @@ class System(threading.Thread):
 
 
 class ThreadPool:
-    def __init__(self, num_threads, auto_start=False):
+    def __init__(self, num_threads, conf, auto_start=False):
         self.num_threads = num_threads
         self.result_queue = queue.Queue()
         self.task_queue = queue.Queue()
         self.sys = None
         self.tasks_total = 0
+        self.conf = conf
 
         if auto_start:
             self.start()
 
     def start(self, output=None):
         if self.num_threads > 1:
-            self.sys = System(0, self.result_queue, output, self.tasks_total)
+            self.sys = System(
+                0, self.result_queue, output, self.tasks_total, self.conf)
             self.sys.start()
 
         for index in range(1, self.num_threads):
@@ -174,7 +177,7 @@ class Task:
         else:
             speed = 'n\\a'
 
-        line = settings.UPLOAD_FORMAT.format(
+        line = self.conf['UPLOAD_FORMAT'].format(
             progress='=' * progress_len,
             left=' ' * (len_full - progress_len),
             progress_percent=progress,
@@ -196,15 +199,15 @@ class Task:
             return
 
         output = self.worker.output
-        prefix = settings.THREAD_MAX_COUNT
-        total = prefix + settings.ENDED_OUTPUT_MAX_COUNT
+        prefix = self.conf['THREAD_MAX_COUNT']
+        total = prefix + self.conf['ENDED_OUTPUT_MAX_COUNT']
         if len(output) >= total:
             output[prefix:total] = output[prefix + 1:total] + [line]
         else:
             output.append(line)
 
 
-def _upload(key, callback, local_path, replace=False, rrs=False):
+def _upload(key, callback, local_path, cb_num, replace=False, rrs=False):
     local_file_path = utils.file_path(local_path)
 
     with open(local_file_path, 'rb') as local_file:
@@ -212,7 +215,7 @@ def _upload(key, callback, local_path, replace=False, rrs=False):
             local_file,
             replace=replace,
             cb=callback,
-            num_cb=settings.UPLOAD_CB_NUM,
+            num_cb=cb_num,
             reduced_redundancy=rrs,
             rewind=True,
         )
@@ -232,7 +235,8 @@ class Upload(Task):
             boto.s3.key.Key(bucket=self.bucket, name=self.name),
             self.progress,
             self.data['local_path'],
-            rrs=self.conf['reduced_redundancy'],
+            self.conf['UPLOAD_CB_NUM'],
+            rrs=self.conf['REDUCED_REDUNDANCY'],
         )
         self.data['comment'] = ['uploaded']
 
@@ -251,6 +255,7 @@ class ReplaceUpload(Task):
             self.data['key'],
             self.progress,
             self.data['local_path'],
+            self.conf['UPLOAD_CB_NUM'],
             replace=True,
         )
         self.data['comment'] = ['uploaded(replaced)']
@@ -275,9 +280,9 @@ class RenameRemote(Task):
 
     def handler(self):
         new_key = self.data['key'].copy(
-            self.conf['bucket'], self.data['local_name'],
+            self.conf['BUCKET'], self.data['local_name'],
             metadata=None,
-            reduced_redundancy=self.conf['reduced_redundancy'],
+            reduced_redundancy=self.conf['REDUCED_REDUNDANCY'],
             preserve_acl=True,
             encrypt_key=False,
             validate_dst_bucket=True,
@@ -298,7 +303,7 @@ class RenameLocal(Task):
 
     def handler(self):
         dest_name = os.path.join(
-            self.conf['project_root'], self.data['key'].name)
+            self.conf['PROJECT_ROOT'], self.data['key'].name)
 
         dest_dir = os.path.dirname(dest_name)
         # TODO: add lock
@@ -310,7 +315,7 @@ class RenameLocal(Task):
                 return
 
         os.rename(
-            os.path.join(self.conf['project_root'], self.data['local_name']),
+            os.path.join(self.conf['PROJECT_ROOT'], self.data['local_name']),
             dest_name,
         )
         self.data['comment'] = ['renamed']
