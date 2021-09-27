@@ -7,10 +7,8 @@ CONFIG_GLOBAL = os.path.join(CONFIG_DIR, 'config.yml')
 CONFIG_LOCAL_NAME = '.s3sync'
 KEY_PATTERN = '{name} {storage} {size} {modified} {owner} {md5}'
 KEY_PATTERN_NAME_LEN = 60
-LIST_LIMIT = 20
-COMPARE_HASH = True
 THREAD_MAX_COUNT = 16
-ENDED_OUTPUT_MAX_COUNT = 16
+ENDED_OUTPUT_MAX_COUNT = 4
 UPLOAD_CB_NUM = 10
 UPLOAD_FORMAT = '[{progress}>{left}] {progress_percent:3.0f}% {speed} {info}'
 REDUCED_REDUNDANCY = False
@@ -47,11 +45,4 @@ LOGGING = {
             'level': 'INFO',
         },
     }
-}
-
-STORAGE_ALIASES = {
-    'GLACIER': '  G',
-    'STANDARD': '  S',
-    'STANDARD_IA': 'SIA',
-    'REDUCED_REDUNDANCY': 'RRS',
 }

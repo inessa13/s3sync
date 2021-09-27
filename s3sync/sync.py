@@ -14,7 +14,7 @@ import boto.s3.key
 import reprint
 import yaml
 
-from . import __version__, errors, settings, tasks, utils
+from . import __version__, constants, errors, settings, tasks, utils
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +25,17 @@ class S3SyncTool:
         self.confirm_permanent = {}
 
         # load configs
-        self.conf = {k.lower(): v for k, v in settings.__dict__.items()}
+        self.conf = {
+            k.upper(): v
+            for k, v in settings.__dict__.items()
+            if not k.startswith('_') and isinstance(v, (int, str, dict))
+        }
         self.load_config(settings.CONFIG_GLOBAL, update=True)
 
         project_root = utils.find_project_root()
         if project_root:
-            self.conf['project_root'] = project_root
-            self.conf['local_config'] = project_config = os.path.join(
+            self.conf['PROJECT_ROOT'] = project_root
+            self.conf['LOCAL_CONFIG'] = project_config = os.path.join(
                 project_root, settings.CONFIG_LOCAL_NAME)
             self.load_config(project_config, update=True)
 
@@ -41,6 +45,7 @@ class S3SyncTool:
 
         with open(path, 'r') as config_file:
             loaded = yaml.safe_load(config_file)
+            loaded = {k.upper(): v for k, v in loaded.items()}
             if update:
                 self.conf.update(loaded)
             return loaded
@@ -145,7 +150,7 @@ class S3SyncTool:
         cmd = subparsers.add_parser(
             'diff',
             parents=[common_diff],
-            formatter_class=utils.Formatter,
+                formatter_class=utils.Formatter,
             help='diff local and remote')
         cmd.set_defaults(func=self.on_diff)
 
@@ -212,28 +217,28 @@ class S3SyncTool:
         parser.print_help()
 
     def handler(self, namespace):
-        if not self.conf.get('access_key') or not self.conf.get('secret_key'):
+        if not self.conf.get('ACCESS_KEY') or not self.conf.get('SECRET_KEY'):
             raise errors.UserError('Missing access or secret key')
 
         self.debug('connecting s3...')
         # os.environ['S3_USE_SIGV4'] = 'True'
         self.conn = boto.s3.connection.S3Connection(
-            self.conf.get('access_key'), self.conf.get('secret_key'))
+            self.conf.get('ACCESS_KEY'), self.conf.get('SECRET_KEY'))
 
         return namespace.func(namespace)
 
     def bucket(self, name=None):
-        name = name or self.conf.get('bucket')
+        name = name or self.conf.get('BUCKET')
         if not name:
             return None
 
         for region in boto.s3.regions():
-            if (self.conf.get('allowed_regions')
-                    and region.name not in self.conf['allowed_regions']):
+            if (self.conf.get('ALLOWED_REGIONS')
+                    and region.name not in self.conf['ALLOWED_REGIONS']):
                 continue
             conn = boto.s3.connection.S3Connection(
-                self.conf.get('access_key'),
-                self.conf.get('secret_key'),
+                self.conf.get('ACCESS_KEY'),
+                self.conf.get('SECRET_KEY'),
                 host=region.endpoint)
             if not conn:
                 continue
@@ -244,7 +249,7 @@ class S3SyncTool:
 
     def on_config(self, namespace):
         if namespace.local:
-            config_path = self.conf.get('local_config')
+            config_path = self.conf.get('LOCAL_CONFIG')
         else:
             config_path = settings.CONFIG_GLOBAL
 
@@ -386,8 +391,13 @@ class S3SyncTool:
                         remote['modified'], '%Y-%m-%dT%H:%M:%S.000Z')
                     remote_modified += datetime.timedelta(hours=4)
 
-                    remote['comment'].append('modified: {0}'.format(
-                        local_modified - remote_modified))
+                    delta = local_modified - remote_modified
+                    if delta.days > 1:
+                        remote['comment'].append(
+                            'modified: remote {0} days older'.format(
+                                delta.days))
+                    else:
+                        remote['comment'].append('modified: {0}'.format(delta))
 
                     if namespace.force_upload:
                         remote['state'] = '>'
@@ -518,7 +528,8 @@ class S3SyncTool:
                 files[remote.name]['key'] = remote
 
         conflicts = 0
-        pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT, auto_start=False)
+        pool = tasks.ThreadPool(
+            self.conf['THREAD_MAX_COUNT'], self.conf, auto_start=False)
 
         for key, data in files.items():
             if 'key' in data and namespace.force:
@@ -535,7 +546,7 @@ class S3SyncTool:
         if conflicts:
             print('{} remote paths exists, use force flag'.format(conflicts))
 
-        with reprint.output(initial_len=settings.THREAD_MAX_COUNT) as output:
+        with reprint.output(initial_len=self.conf['THREAD_MAX_COUNT']) as output:
             pool.start(output)
             pool.join()
 
@@ -568,7 +579,7 @@ class S3SyncTool:
         size = 0
 
         bucket = self.bucket()
-        pool = tasks.ThreadPool(settings.THREAD_MAX_COUNT)
+        pool = tasks.ThreadPool(self.conf['THREAD_MAX_COUNT'], self.conf)
 
         for name, data in files.items():
             action = None
@@ -652,7 +663,7 @@ class S3SyncTool:
                 self.info('list limit reached!')
                 break
 
-        with reprint.output(initial_len=settings.THREAD_MAX_COUNT) as output:
+        with reprint.output(initial_len=self.conf['THREAD_MAX_COUNT']) as output:
             pool.start(output)
             pool.join()
 
@@ -695,7 +706,7 @@ class S3SyncTool:
         return values_map[input_data[0]]
 
     def _print_key(self, key):
-        name_len = self.conf['key_pattern_name_len']
+        name_len = self.conf['KEY_PATTERN_NAME_LEN']
 
         if len(key.name) < name_len:
             name = key.name.ljust(name_len, ' ')
@@ -708,7 +719,7 @@ class S3SyncTool:
                 'size': str(key.size).ljust(10, ' '),
                 'owner': key.owner.display_name,
                 'modified': key.last_modified,
-                'storage': settings.STORAGE_ALIASES.get(
+                'storage': constants.STORAGE_ALIASES.get(
                     key.storage_class, '?'),
                 'md5': key.etag[1:-1],
             }
@@ -722,7 +733,7 @@ class S3SyncTool:
                 'md5': ''
             }
 
-        pattern = self.conf.get('key_pattern') or settings.KEY_PATTERN
+        pattern = self.conf.get('KEY_PATTERN')
         print(pattern.format(**params))
 
 
